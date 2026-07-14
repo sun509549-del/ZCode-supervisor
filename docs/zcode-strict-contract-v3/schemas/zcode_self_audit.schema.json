@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/zcode_self_audit.v1.schema.json",
+  "title": "zcode_self_audit.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "zcode_self_audit.v1"
+    },
+    "contract_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "overall_status": {
+      "enum": [
+        "pass",
+        "fail",
+        "blocked",
+        "unknown"
+      ]
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://zcode-supervisor.local/schemas/requirement_trace.v1.schema.json",
+        "title": "requirement_trace.v1",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^REQ-[0-9]{3,}$"
+          },
+          "status": {
+            "enum": [
+              "satisfied",
+              "not_satisfied",
+              "blocked",
+              "not_applicable",
+              "unknown"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "enum": [
+                    "changed_file",
+                    "validation_result",
+                    "diffstat",
+                    "code_reference",
+                    "test_output",
+                    "manifest",
+                    "note"
+                  ]
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "ref",
+                "summary"
+              ]
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "evidence"
+        ]
+      }
+    },
+    "edge_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "covered",
+              "not_covered",
+              "blocked",
+              "unknown"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "enum": [
+                    "changed_file",
+                    "validation_result",
+                    "diffstat",
+                    "code_reference",
+                    "test_output",
+                    "manifest",
+                    "note"
+                  ]
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "ref",
+                "summary"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "evidence"
+        ]
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "enum": [
+            "pass",
+            "fail",
+            "skipped",
+            "unknown"
+          ]
+        },
+        "manifest_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "result",
+        "summary"
+      ]
+    },
+    "deviations_from_plan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "impact": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "unknown"
+            ]
+          },
+          "requires_codex_audit": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "plan_id",
+          "reason",
+          "impact",
+          "requires_codex_audit"
+        ]
+      }
+    },
+    "unresolved_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risk_flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocked_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "contract_id",
+    "task_id",
+    "overall_status",
+    "requirements",
+    "validation",
+    "deviations_from_plan",
+    "unresolved_questions",
+    "risk_flags",
+    "blocked_reasons"
+  ]
+}

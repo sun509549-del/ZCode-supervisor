@@ -7,7 +7,7 @@
 
 # ZCode-supervisor
 
-![Version](https://img.shields.io/badge/version-v0.0.1-blue)
+![Version](https://img.shields.io/badge/version-v0.0.2-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Node](https://img.shields.io/badge/node-%3E%3D22-339933)
 ![Python](https://img.shields.io/badge/python-%3E%3D3.11-3776AB)
@@ -30,36 +30,80 @@ AI coding の速度を上げつつ、見張り続ける負担を減らすため�
 
 このリポジトリは Z.AI / ZCode 公式プロジェクトではありません。
 
+## 現在の evidence status
+
+比較計測は完了しています。ZCode worker は 18/20 strict green・9,729,458
+worker tokens、同一 packet の Codex worker は 20/20・1,885,377 worker tokens
+でした。Codex orchestration usage is unavailable. Total workflow savings are
+not claimable. unavailable usage は zero と扱いません。ZCode remains
+optional/experimental であり、default implementation route ではありません。
+根拠と運用判断は
+[ZCode Evidence Decision Checkpoint](docs/zcode-evidence-decision-checkpoint.md)
+を参照してください。
+
 ## クイックスタート
 
-現在の public setup path は、PyPI package を `uvx` で実行する方法です。
+すでに target repo があり、最短で public path を使いたい場合はここから始めます。
+`/ABSOLUTE/PATH/TO/YOUR/TARGET_REPO` は、Codex と ZCode-supervisor に扱わせたい
+repo の絶対パスに置き換えてください。
 
 ```bash
 uvx --from zcode-supervisor zcode-install-repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO
-```
 
-最初の delegated task の前に route check をします。
-
-```bash
 uvx --from zcode-supervisor zcode-auto-route \
   --workspace /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO \
   --objective "setup smoke check"
 ```
 
-source から開発する場合は、この repo を clone して underlying Python command を直接使えます。
+これで repo-local routing files が書かれ、JSON の routing decision が返ります。
+`--execute` で実際に ZCode へ委譲する前に、ZCode を install して sign in を済ませて
+ください。詳しい prerequisites、source fallback、troubleshooting は
+[セットアップ手順](#セットアップ手順-target-repo-に導入する) を参照してください。
+
+この repository 自体の source development と fresh-clone verification は
+[Fresh Clone 開発チェック](#fresh-clone-開発チェック) にあります。release 詳細は
+[docs/distribution.md](docs/distribution.md) を参照してください。Homebrew tap は
+一旦 archived 扱いです。
+
+## Fresh Clone 開発チェック
+
+この repository 自体を fresh clone から検証する最小 command 列です。source smoke
+check は local source files だけを使い、その後 repository check suite を実行します。
+この local source verification には ZCode desktop / provider setup は不要です。
+実際に ZCode へ `--execute` で委譲する時だけ必要です。
 
 ```bash
 git clone https://github.com/AkiGarage/ZCode-supervisor.git
 cd ZCode-supervisor
+
+node --version
+python3 --version
+git --version
+uvx --version
+
 python3 tools/zcode_supervisor/zcode_supervisor.py install-repo \
-  --repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO \
+  --repo "$PWD" \
   --write-agents
+
+python3 tools/zcode_supervisor/zcode_supervisor.py auto-route \
+  --workspace "$PWD" \
+  --objective "setup smoke check"
+
+bash scripts/check.sh
 ```
 
-Homebrew tap は一旦 archived 扱いです。source work では
-`AkiGarage/ZCode-supervisor` を clone してください。
+期待結果: installer が `"ok": true` を返し、route check が JSON decision を返し、
+`bash scripts/check.sh` が exit `0` で完了します。
 
-release 詳細と検証 command は [docs/distribution.md](docs/distribution.md) にあります。
+published package path は、次の CLI smoke checks でも確認できます。
+
+```bash
+uvx --from zcode-supervisor zcode-install-repo --help
+uvx --from zcode-supervisor zcode-auto-route --help
+```
+
+残る手動 prerequisite: `--execute` で実際に ZCode へ委譲する前に、ZCode を install
+して sign in を済ませてください。
 
 ## Codex にセットアップしてもらう
 
@@ -148,15 +192,16 @@ target repo に routing files が入り、dry route check が動き、残って�
 
 ## セットアップ手順: target repo に導入する
 
-初めて使うときはここから進めてください。目的は、既存の1つの repo に
-「Codex が計画と監査を担当し、ZCode が範囲限定の実装だけを担当する」
-ための目印を入れることです。
+初めて使う場合、または Quick Start がうまくいかない場合はここから進めてください。
+目的は、既存の1つの repo に「Codex が計画と監査を担当し、ZCode が範囲限定の
+実装だけを担当する」ための目印を入れることです。
 
-### 0. 2つの repo を区別する
+### 0. target repo を確認する
 
-- **この repo:** `ZCode-supervisor`。supervisor tool が入っています。
 - **target repo:** ZCode に手伝ってほしい、あなたの目的の repo です。
   `zcode-install-repo` に渡すのはこちらの path です。
+- **この repo:** `ZCode-supervisor`。source development または source fallback
+  の時だけ clone が必要です。
 
 `/path/to/target-repo` はそのまま打つ文字ではありません。あなたの目的の repo の
 絶対パスに置き換えてください。例:
@@ -171,90 +216,69 @@ target repo に routing files が入り、dry route check が動き、残って�
 pwd
 ```
 
-### 1. この supervisor repo を手元に置く
+### 1. requirements を確認する
 
-GitHub 上で読んでいて、まだ local に repo がない場合は clone します。
+setup と local verification に必要なもの:
 
-```bash
-git clone https://github.com/AkiGarage/ZCode-supervisor.git
-cd ZCode-supervisor
-pwd
-```
-
-ここで出る `pwd` の結果が、この supervisor repo の絶対パスです。
-clone 先が `~/dev/ZCode-supervisor` ではない場合、以降の例に出る
-`~/dev/ZCode-supervisor` を自分の supervisor repo path に置き換えてください。
-
-### 2. 必要な app と tool を準備する
-
-まず ZCode を install し、sign in と provider 設定を済ませます。
-
-- ZCode install docs: https://zcode.z.ai/en/docs/install
-
-必要要件:
-
-- ZCode desktop app が install 済みで、model provider に接続されていること。
+- `uvx` from uv: https://docs.astral.sh/uv/getting-started/installation/
 - Node.js `>=22`
 - Python `>=3.11`
 - Git
 - macOS Terminal などの POSIX-like shell
+
+`--execute` で real delegated task を走らせる時に必要なもの:
+
+- ZCode desktop app installed and signed in: https://zcode.z.ai/en/docs/install
+- ZCode が model provider に接続されていること
 - configured model provider への network access
 
 local tool を確認します。
 
 ```bash
+uvx --version
 node --version
 python3 --version
 git --version
 ```
 
-### 3. Terminal で installer を実行する
+### 2. installer を実行する
 
-これは Terminal で実行してください。今いる folder はどこでも大丈夫です。
-target repo を絶対パスで渡すので、current directory に依存しません。
-
-```bash
-zcode-install-repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO
-```
-
-例:
-
-```bash
-zcode-install-repo ~/work/my-app
-```
-
-これは setup 用 command です。target repo ごとに1回だけ実行します。
-task ごとに毎回実行するものではありません。
-
-`zcode-install-repo` が見つからない場合は、この supervisor repo の command を
-直接実行します。
-
-```bash
-python3 /absolute/path/to/ZCode-supervisor/tools/zcode_supervisor/zcode_supervisor.py install-repo \
-  --repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO \
-  --write-agents
-```
-
-supervisor repo が別の場所にある場合は、`/absolute/path/to/ZCode-supervisor` を
-step 1 の `pwd` で出た絶対パスに置き換えてください。
-
-### Primary install path
-
-現在の public setup path は、PyPI package を `uvx` で実行する方法です。
+public setup path は、PyPI package を `uvx` で実行する方法です。
 
 ```bash
 uvx --from zcode-supervisor zcode-install-repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO
 ```
 
+例:
+
+```bash
+uvx --from zcode-supervisor zcode-install-repo ~/work/my-app
+```
+
+これは setup 用 command です。target repo ごとに1回だけ実行します。
+task ごとに毎回実行するものではありません。
+
+`uvx` が使えない場合、または source から開発する場合は、この repo を clone して
+underlying Python command を直接使えます。
+
+```bash
+git clone https://github.com/AkiGarage/ZCode-supervisor.git
+cd ZCode-supervisor
+python3 tools/zcode_supervisor/zcode_supervisor.py install-repo \
+  --repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO \
+  --write-agents
+```
+
 PyPI package は long-lived PyPI token ではなく Trusted Publishing で publish 済みです。
-より慎重な user は現在の GitHub Release archive `v0.0.1` を download し、
+より慎重な user は、install する version と同じarchiveを
+[GitHub Releases](https://github.com/AkiGarage/ZCode-supervisor/releases) からdownloadし、
 `SHA256SUMS` と `gh attestation verify` で検証してから使えます。Homebrew は
 一旦 archived 扱いです。[docs/distribution.md](docs/distribution.md) を参照してください。
 
 maintainer は TestPyPI / PyPI publish 前に
 [docs/pypi-trusted-publisher.md](docs/pypi-trusted-publisher.md) を使ってください。
 
-### 4. target repo に書かれたものを確認する
+### 3. target repo に書かれたものを確認する
 
 installer は target repo の中に次を作ります。
 
@@ -267,7 +291,7 @@ installer は target repo の中に次を作ります。
 audit、recovery、final acceptance を持ちます。ZCode は `zcodectl run-packet`
 経由の bounded implementation だけを担当します。
 
-### 5. 編集前に route を確認する
+### 4. 編集前に route を確認する
 
 実装作業の前に dry run で route を確認します。
 
@@ -284,7 +308,7 @@ uvx --from zcode-supervisor zcode-auto-route \
 - `codex_direct`: Codex が直接扱って大丈夫です。
 - `ask_user`: high-risk なので一度止めて確認します。
 
-### 6. 実際に ZCode に範囲限定で任せる
+### 5. 実際に ZCode に範囲限定で任せる
 
 Codex が編集範囲と検証 command を決めたら実行します。
 
@@ -316,7 +340,7 @@ Codex が最初の安全確認として信頼する command を書きます。�
 
 ## リポジトリ概要
 
-- **現在の version:** `v0.0.1`
+- **現在の version:** `v0.0.2`
 - **主な用途:** ZCode/GLM に限定された implementation task を委譲し、
   Codex が planning、guardrails、validation、audit、final review を担当します。
 - **主な実行経路:** `node tools/zcode_control/zcodectl.mjs run-packet`
@@ -355,13 +379,16 @@ Codex が最初の安全確認として信頼する command を書きます。�
 
 ## Version
 
-現在の release は `v0.0.1` です。
+現在の development target は `v0.0.2` です。
+
+published package は [PyPI](https://pypi.org/project/zcode-supervisor/) で確認できます。
+順序付きreleaseの途中では、repository versionとpackage indexが短時間だけ異なる場合があります。
 
 Distribution and release preparation: [docs/distribution.md](docs/distribution.md)
 
-- `VERSION`: `0.0.1`
-- `package.json`: `0.0.1`
-- `pyproject.toml`: `0.0.1`
+- `VERSION`: `0.0.2`
+- `package.json`: `0.0.2`
+- `pyproject.toml`: `0.0.2`
 - release notes: [CHANGELOG.md](CHANGELOG.md)
 
 ## Codex と ZCode の役割分担
@@ -377,7 +404,18 @@ Distribution and release preparation: [docs/distribution.md](docs/distribution.m
 2. Codex が workspace snapshot を取ります。
 3. ZCode が isolated workspace または worktree 内で作業します。
 4. Codex が supervisor audit を実行します。
-5. Codex が独立して結果を review し、accept / reject を判断します。
+5. Codex が run JSON、changed-file audit、validation evidence から accept /
+   reject を判断します。
+6. non-trivial な repository change は scoped local commit を作った後、push 前に
+   `codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+   を final closeout gate として走らせます。
+
+v0.0.2 の default は token-efficient な thin launcher/auditor pattern です。
+Codex は一度だけ plan、allowed files、validation を決めて ZCode を起動し、
+まず supervisor run JSON を acceptance surface として見ます。ZCode の後に
+Codex が広く再読・再実装すると Codex-side token usage が増えるため、
+それは避けます。ただし `codex-autoreview` は ship 前の最終 Codex quality gate
+として残します。
 
 `Full access` は disposable workspace または isolated worktree で使う想定です。
 packet 作成は regular workspace での `Full access` を default で block し、
@@ -456,8 +494,62 @@ uvx --from zcode-supervisor zcode-auto-route \
   --execute
 ```
 
-`--execute` は packet を作り、`zcodectl run-packet` を呼び、結果を
-`.codex/zcode/runs/` に書きます。最終 acceptance は Codex が担当します。
+`--execute` は packet を作り、`zcodectl run-packet` を呼び、結果 JSON を
+`.codex/zcode/runs/` から読み直します。実装 packet では、allowed-file set
+から非ゼロの changed-file cap を既定で設定し、ZCode CLI timeout も渡します。
+ZCode が run JSON を返さない、または changed files が 0 の場合は、成功扱いに
+せず delegation failure として扱います。既に完了済みの実装を確認させる意図が
+ある場合だけ `--allow-no-change` を渡します。最終 acceptance は Codex が担当します。
+
+### Thin Launcher / Autoreview Acceptance
+
+supervision を bounded に保つため、ZCode が返った後の Codex は second implementer
+にならず、次の順序で acceptance します。
+
+1. `route=delegate_zcode` と `run_file_exists=true` を確認します。
+2. run JSON の `supervisor_state`、changed files、`audit_ok`、
+   `validation_ok`、attempts、provider errors、usage/accounting availability
+   を確認します。
+3. run JSON missing、scope audit failure、validation failure、implementation
+   packet なのに changed files 0 の場合は reject / retry します。
+4. ship 判断前、または task risk が高い場合は validation command を Codex 側で
+   再実行します。
+5. scoped local commit を作った後、push / PR / release 前に
+   `codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+   を final closeout gate として走らせます。
+
+`autoreview` が accepted issue を出した場合は、実diffで確認します。修正が
+delegated implementation に属するなら、より狭い ZCode packet で直すのを優先します。
+supervisor/tooling 側の修正や、ZCode が安全に進めない場合だけ Codex direct
+recovery に切り替えます。この recovery は最小に保ちます。Codex が読むのは
+run JSON、validation output、小さな affected diff に絞り、validation を通すための
+auditor repair だけを行います。ZCode-only run とは別 mode として記録し、token
+削減率と品質比較を正直に残します。
+
+thin launcher pattern と重い「普通の監督モード」を比較したい場合は、各 mode の
+`codex exec --json` 出力を保存して、次を実行します。
+
+```bash
+zcode-eval compare-codex-runs \
+  --baseline-label direct_minimal \
+  --run direct_minimal=/path/to/direct-events.jsonl \
+  --run zcode_minimal=/path/to/zcode-events.jsonl \
+  --quality direct_minimal=pass \
+  --quality zcode_minimal=pass \
+  --zcode-run-json zcode_minimal=/path/to/run.zcode.json \
+  --duration direct_minimal=120 \
+  --duration zcode_minimal=80 \
+  --candidate-label zcode_minimal \
+  --min-reduction-percent 75 \
+  --require-quality-pass \
+  --require-zcode-acceptance \
+  --markdown-out artifacts/reports/token-comparison.md
+```
+
+report には Codex-side token totals、reduction percentage、duration ratio、
+quality status、ZCode acceptance evidence が入ります。上の gate flags を付けると、
+candidate が near-80% の Codex-side token saving と quality / ZCode acceptance
+checks を満たさない限り non-zero exit になります。
 
 ### Manual Packet Flow
 
@@ -699,6 +791,10 @@ python3 tools/zcode_eval/zcode_eval.py import-duel-results \
 ## ZCode Release Monitoring
 
 ZCode compatibility は `config/zcode-release-baseline.json` に pin されています。
+hermetic baseline は `3.3.5` です。live `3.3.5` app/provider behavior は
+**UNVERIFIED** のままです。tested contracts、static installed metadata、
+live-only boundary は
+[compatibility evidence](docs/zcode-3.3.5-compatibility.md) を参照してください。
 manual check:
 
 ```bash

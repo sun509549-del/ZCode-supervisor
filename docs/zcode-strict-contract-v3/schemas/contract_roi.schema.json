@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/contract_roi.v1.schema.json",
+  "title": "contract_roi.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "contract_roi.v1"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "contract_id": {
+      "type": "string"
+    },
+    "added_spec_effective_tokens": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "acceptance_tokens_saved_estimate": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "repair_tokens_saved_estimate": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "retry_tokens_saved_estimate": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "net_codex_token_delta_estimate": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "estimate_method": {
+      "enum": [
+        "baseline_comparison",
+        "shadow_comparison",
+        "unavailable"
+      ]
+    },
+    "measured": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "task_id",
+    "contract_id",
+    "estimate_method",
+    "measured"
+  ]
+}

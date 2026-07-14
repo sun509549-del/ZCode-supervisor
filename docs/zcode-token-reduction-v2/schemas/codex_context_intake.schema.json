@@ -1,0 +1,557 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/codex_context_intake.v1.schema.json",
+  "title": "codex_context_intake.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "codex_context_intake.v1"
+    },
+    "recorded_at": {
+      "type": "string"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "canonical_mode": {
+      "enum": [
+        "codex_only",
+        "zcode_nested_codex",
+        "zcode_direct_launcher",
+        "zcode_direct_harness"
+      ]
+    },
+    "display_mode": {
+      "type": "string"
+    },
+    "human_display_mode": {
+      "type": "string"
+    },
+    "mode_detail": {
+      "type": "string"
+    },
+    "mode_aliases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "run_kind": {
+      "enum": [
+        "production",
+        "measurement",
+        "noop_baseline"
+      ]
+    },
+    "phase": {
+      "enum": [
+        "plan",
+        "implementation",
+        "acceptance",
+        "validation",
+        "validation_audit",
+        "report",
+        "noop_baseline",
+        "unknown"
+      ]
+    },
+    "attempt_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "usage_ledger_run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "template_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "template_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raw_prompt_stored": {
+          "const": false
+        }
+      },
+      "required": [
+        "prompt_bytes",
+        "raw_prompt_stored"
+      ]
+    },
+    "stdin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stdin_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stdin_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "stdin_bytes",
+        "sections"
+      ]
+    },
+    "argv": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "codex_command_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_arg_style": {
+          "enum": [
+            "none",
+            "repeated_flags",
+            "comma_list",
+            "mixed",
+            "unknown"
+          ]
+        },
+        "prompt_source": {
+          "enum": [
+            "argument",
+            "stdin",
+            "file",
+            "unknown"
+          ]
+        },
+        "harness_arg_order_validated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "image_arg_style",
+        "prompt_source",
+        "harness_arg_order_validated"
+      ]
+    },
+    "codex_invocation": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "codex_cli_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_arg": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolved_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reasoning_effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandbox": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approval_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ignore_user_config": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "ignore_rules": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "web_search_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_schema_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_schema_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "repo_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agents_bytes_shown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rules_bytes_shown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "config_bytes_shown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repo_hint_bytes_shown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "full_repo_context_shown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agents_bytes_shown",
+        "rules_bytes_shown",
+        "config_bytes_shown",
+        "repo_hint_bytes_shown",
+        "full_repo_context_shown"
+      ]
+    },
+    "zcode_io": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "zcode_manifest_bytes_shown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "zcode_stdout_bytes_captured": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "zcode_stderr_bytes_captured": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "zcode_stdout_bytes_model_visible": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "zcode_stderr_bytes_model_visible": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "zcode_manifest_bytes_shown",
+        "zcode_stdout_bytes_captured",
+        "zcode_stderr_bytes_captured",
+        "zcode_stdout_bytes_model_visible",
+        "zcode_stderr_bytes_model_visible"
+      ]
+    },
+    "diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "captured_bytes_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "summarized_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_visible_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncation_policy": {
+          "enum": [
+            "manifest_only",
+            "cap",
+            "full",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "captured_bytes_total",
+        "summarized_bytes",
+        "model_visible_bytes",
+        "truncation_policy"
+      ]
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "captured_bytes_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "summarized_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_visible_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excerpt_policy": {
+          "enum": [
+            "manifest_only",
+            "error_blocks",
+            "head_tail",
+            "full",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "captured_bytes_total",
+        "summarized_bytes",
+        "model_visible_bytes",
+        "excerpt_policy"
+      ]
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image_bytes_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image_manifest_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_resent_to_acceptance": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "image_count",
+        "image_bytes_total",
+        "image_resent_to_acceptance"
+      ]
+    },
+    "tool_context_intake": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "command_stdout_bytes_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "command_stderr_bytes_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "command_stdout_bytes_visible_to_model": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "command_stderr_bytes_visible_to_model": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "large_command_output_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "largest_command_output_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file_change_event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "plan_update_event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "web_search_event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mcp_tool_event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "green_path_forbidden_command_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "green_path_forbidden_commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "command_count",
+        "large_command_output_count",
+        "largest_command_output_bytes",
+        "green_path_forbidden_command_count",
+        "green_path_forbidden_commands"
+      ]
+    },
+    "visible_context_budget": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "budget_violations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "secret_scan_result": {
+          "enum": [
+            "pass",
+            "fail",
+            "skipped",
+            "unknown"
+          ]
+        },
+        "raw_logs_gitignored": {
+          "type": "boolean"
+        },
+        "env_policy": {
+          "enum": [
+            "allowlist",
+            "unknown"
+          ]
+        },
+        "raw_jsonl_sensitivity": {
+          "enum": [
+            "sensitive",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "user_impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ask_user_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "manual_intervention_required": {
+          "type": "boolean"
+        },
+        "manual_repair_required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ask_user_count",
+        "manual_intervention_required",
+        "manual_repair_required"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "recorded_at",
+    "experiment_id",
+    "task_id",
+    "canonical_mode",
+    "run_kind",
+    "phase",
+    "attempt_index",
+    "run_id",
+    "prompt",
+    "stdin",
+    "argv"
+  ]
+}

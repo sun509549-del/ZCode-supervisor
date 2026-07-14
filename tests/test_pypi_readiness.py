@@ -4,11 +4,11 @@ from tools.zcode_eval.pypi_readiness import PackageIndexStatus, evaluate_readine
 
 
 READY_RELEASE = {
-    "tagName": "v0.0.1",
+    "tagName": "v0.0.2",
     "isDraft": False,
     "isPrerelease": False,
     "assets": [
-        {"name": "zcode-supervisor-v0.0.1.tar.gz"},
+        {"name": "zcode-supervisor-v0.0.2.tar.gz"},
         {"name": "SHA256SUMS"},
     ],
 }
@@ -28,8 +28,8 @@ READY_ENVIRONMENTS = {
 def evaluate(**overrides):
     defaults = {
         "target": "testpypi",
-        "tag": "v0.0.1",
-        "version": "0.0.1",
+        "tag": "v0.0.2",
+        "version": "0.0.2",
         "trusted_publishers_configured": False,
         "release": READY_RELEASE,
         "environments": READY_ENVIRONMENTS,
@@ -70,7 +70,7 @@ class PyPIReadinessTests(unittest.TestCase):
             target="pypi",
             trusted_publishers_configured=True,
             package_statuses={
-                "testpypi": PackageIndexStatus("testpypi", 200, ["0.0.1"]),
+                "testpypi": PackageIndexStatus("testpypi", 200, ["0.0.2"]),
                 "pypi": PackageIndexStatus("pypi", 404, []),
             },
         )

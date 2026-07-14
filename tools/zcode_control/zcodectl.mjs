@@ -2,20 +2,22 @@
 // Minimal Codex-side controller for ZCode.
 // Uses stable surfaces first: app metadata, cua-driver launch, and Electron CDP.
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, chmod, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { openUsageExpression, summaryExpression, usageSnapshotExpression } from "./browser_scripts.mjs";
 import {
   DEFAULT_PROVIDER_MAX_ATTEMPTS,
+  DEFAULT_PROVIDER_RATE_LIMIT_FAIL_FAST_COUNT,
   DEFAULT_PROVIDER_RETRY_DELAY_MS,
   classifyProviderError,
   classifyProviderRunState,
+  providerRateLimit1302Count,
   usageAvailableFromStdout,
 } from "./provider_errors.mjs";
 
@@ -26,12 +28,27 @@ const DEFAULT_ZCODE_CLI = "/Applications/ZCode.app/Contents/Resources/glm/zcode.
 const PROMPT_TIMEOUT_MS = 30 * 60 * 1000;
 const TOOL_DIR = dirname(fileURLToPath(import.meta.url));
 const SUPERVISOR_SCRIPT = resolve(TOOL_DIR, "..", "zcode_supervisor", "zcode_supervisor.py");
+const MODEL_USAGE_DB_DELTA_SCRIPT = resolve(TOOL_DIR, "..", "zcode_eval", "zcode_model_usage_db_delta.py");
+const MODEL_USAGE_DB_DELTA_SOURCE_TYPE = "zcode_cli_model_usage_db_delta";
+const MODEL_USAGE_DB_DELTA_BEFORE_NAME = "zcode-model-usage-before.json";
+const MODEL_USAGE_DB_DELTA_AFTER_NAME = "zcode-model-usage-delta.json";
+const WORKER_USAGE_LEDGER_NAME = "worker-usage.jsonl";
 const DEFAULT_USAGE_PROVIDER = "zai";
 const DEFAULT_USAGE_SNAPSHOT_TIMEOUT_MS = 20_000;
 const DEFAULT_ZAI_QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit";
 const DEFAULT_VISION_SERVICE = "zai-mcp-server";
 const IMAGE_EXTENSIONS = new Set([".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"]);
 const SECRET_PATH_NEEDLES = [".env", "id_rsa", "id_ed25519", ".ssh", "credential", "credentials"];
+const GIT_CONTROL_ENV_VARS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_NAMESPACE",
+  "GIT_CEILING_DIRECTORIES",
+];
 
 function usage() {
   console.log(`zcodectl
@@ -44,8 +61,9 @@ Usage:
   node tools/zcode_control/zcodectl.mjs cli-version
   node tools/zcode_control/zcodectl.mjs bootstrap-cli-config [--provider zai|bigmodel] [--model glm-5.2] [--source-config <json>] [--cli-config <json>] [--out <json>]
   node tools/zcode_control/zcodectl.mjs vision-preflight [--workspace <path>] [--vision-service zai-mcp-server] [--cli-config <json>] [--out <json>]
-  node tools/zcode_control/zcodectl.mjs cli-prompt (--text <prompt> | --text-file <path>) [--workspace <path>] [--mode plan|edit|build|yolo] [--json] [--out <json>]
-  node tools/zcode_control/zcodectl.mjs run-packet --packet <json> [--mode plan|edit|build|yolo] [--max-attempts 2] [--retry-delay-ms 60000] [--validation-timeout 60] [--usage-snapshot-source auto|zai-api|codexbar|none] [--usage-provider zai] [--vision-preflight auto|required|off] [--json] [--out <json>]
+  node tools/zcode_control/zcodectl.mjs cli-prompt (--text <prompt> | --text-file <path>) [--workspace <path>] [--mode plan|edit|build|yolo] [--timeout-ms 1800000] [--json] [--out <json>]
+  node tools/zcode_control/zcodectl.mjs run-packet --packet <json> [--mode plan|edit|build|yolo] [--max-attempts 2] [--retry-delay-ms 60000] [--timeout-ms 1800000] [--validation-timeout 60] [--repair-validation|--no-repair-validation] [--accept-validated-artifact-after-ms <ms>] [--provider-rate-limit-fail-fast-count 3|--no-provider-rate-limit-fail-fast] [--usage-snapshot-source auto|zai-api|codexbar|none] [--usage-provider zai] [--model-usage-db <sqlite>] [--vision-preflight auto|required|off] [--json] [--out <json>]
+  node tools/zcode_control/zcodectl.mjs app-run-packet --packet <json> [--port 9223] [--timeout-ms 300000] [--interval-ms 2000] [--validation-timeout 60] [--allow-submit] [--require-workspace-bound] [--expected-workspace <path>] [--model-usage-db <sqlite>] [--out <json>]
   node tools/zcode_control/zcodectl.mjs launch [--port 9223] [--new-instance]
   node tools/zcode_control/zcodectl.mjs targets [--port 9223]
   node tools/zcode_control/zcodectl.mjs text [--port 9223] [--max 4000]
@@ -68,6 +86,7 @@ Usage:
 Notes:
   - launch uses cua-driver with Electron remote debugging enabled.
   - cli-* and run-packet use the bundled ZCode headless CLI when available.
+  - app-run-packet is a non-live scaffold for fake/fixture CDP flows. Real app submit requires --allow-submit and ZCODE_APP_CDP_ALLOW_SUBMIT=1.
   - vision-preflight checks for the ZCode/Z.AI image MCP service without printing secrets.
   - run-packet captures before/after quota snapshots via the Z.AI API or CodexBar when available.
   - eval runs JavaScript inside the ZCode renderer. Do not use it for secrets.
@@ -109,13 +128,22 @@ function parseArgs(argv) {
     else if (arg === "--max-attempts") args.maxAttempts = Number(rest[++index]);
     else if (arg === "--retry-delay-ms") args.retryDelayMs = Number(rest[++index]);
     else if (arg === "--validation-timeout") args.validationTimeout = Number(rest[++index]);
+    else if (arg === "--repair-validation") args.repairValidation = true;
+    else if (arg === "--no-repair-validation") args.repairValidation = false;
+    else if (arg === "--accept-validated-artifact-after-ms") args.acceptValidatedArtifactAfterMs = Number(rest[++index]);
+    else if (arg === "--provider-rate-limit-fail-fast-count") args.providerRateLimitFailFastCount = Number(rest[++index]);
+    else if (arg === "--no-provider-rate-limit-fail-fast") args.providerRateLimitFailFast = false;
     else if (arg === "--usage-snapshot-source") args.usageSnapshotSource = rest[++index];
     else if (arg === "--usage-provider") args.usageProvider = rest[++index];
     else if (arg === "--usage-snapshot-timeout-ms") args.usageSnapshotTimeoutMs = Number(rest[++index]);
+    else if (arg === "--model-usage-db") args.modelUsageDb = rest[++index];
+    else if (arg === "--expected-workspace") args.expectedWorkspace = rest[++index];
     else if (arg === "--codexbar-path") args.codexbarPath = rest[++index];
     else if (arg === "--zai-quota-url") args.zaiQuotaUrl = rest[++index];
     else if (arg === "--vision-preflight") args.visionPreflight = rest[++index];
     else if (arg === "--vision-service") args.visionService = rest[++index];
+    else if (arg === "--allow-submit") args.allowSubmit = true;
+    else if (arg === "--require-workspace-bound") args.requireWorkspaceBound = true;
     else if (arg === "--new-instance") args.newInstance = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -167,6 +195,12 @@ function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function sanitizeChildEnv(baseEnv = process.env, extraEnv = {}) {
+  const env = { ...baseEnv, ...extraEnv };
+  for (const name of GIT_CONTROL_ENV_VARS) delete env[name];
+  return env;
+}
+
 async function readJsonFile(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
@@ -206,27 +240,180 @@ async function resolveZcodeCliPath() {
 
 async function runZcodeCli(cliArgs, options = {}) {
   const cliPath = await resolveZcodeCliPath();
+  if (
+    (options.acceptValidatedArtifactAfterMs > 0 && options.auditValidatedArtifact) ||
+    options.providerRateLimitFailFastCount > 0
+  ) {
+    return runZcodeCliWithValidatedArtifactAccept(cliPath, cliArgs, options);
+  }
   const timeout = options.timeoutMs ?? 0;
   try {
     const { stdout, stderr } = await execFileAsync("node", [cliPath, ...cliArgs], {
       cwd: options.cwd ?? process.cwd(),
-      env: {
-        ...process.env,
-        ...(options.env ?? {}),
-      },
+      env: sanitizeChildEnv(process.env, options.env ?? {}),
       maxBuffer: 50 * 1024 * 1024,
       timeout: timeout > 0 ? timeout : undefined,
     });
     return enrichCliResult({ ok: true, cli_path: cliPath, stdout, stderr, exit_code: 0 });
   } catch (error) {
+    const timedOut = timeout > 0 && error.killed === true;
     return enrichCliResult({
       ok: false,
       cli_path: cliPath,
       stdout: error.stdout ?? "",
       stderr: error.stderr ?? error.message,
       exit_code: typeof error.code === "number" ? error.code : 1,
+      timed_out: timedOut,
+      timeout_ms: timedOut ? timeout : null,
     });
   }
+}
+
+async function runZcodeCliWithValidatedArtifactAccept(cliPath, cliArgs, options = {}) {
+  const timeout = options.timeoutMs ?? 0;
+  const acceptAfterMs = options.acceptValidatedArtifactAfterMs ?? 0;
+  const auditIntervalMs = options.auditValidatedArtifactIntervalMs ?? 1000;
+  const child = spawn("node", [cliPath, ...cliArgs], {
+    cwd: options.cwd ?? process.cwd(),
+    env: sanitizeChildEnv(process.env, options.env ?? {}),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdoutChunks = [];
+  const stderrChunks = [];
+  let timedOut = false;
+  let acceptedAudit = null;
+  let providerFailFast = null;
+  let settled = false;
+  const outputLimit = 50 * 1024 * 1024;
+
+  const appendChunk = (chunks, chunk) => {
+    const currentSize = chunks.reduce((total, item) => total + item.length, 0);
+    if (currentSize < outputLimit) chunks.push(chunk);
+  };
+  const finish = (result) => enrichCliResult({
+    ...result,
+    cli_path: cliPath,
+    stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+    stderr: Buffer.concat(stderrChunks).toString("utf8"),
+  });
+
+  return new Promise((resolveRun) => {
+    let timeoutTimer = null;
+    let acceptTimer = null;
+    let acceptInterval = null;
+    let killTimer = null;
+
+    const cleanup = () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (acceptTimer) clearTimeout(acceptTimer);
+      if (acceptInterval) clearInterval(acceptInterval);
+      if (killTimer) clearTimeout(killTimer);
+    };
+
+    const stopChild = () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        killTimer = setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        }, 2000);
+      }
+    };
+
+    const tryProviderRateLimitFailFast = () => {
+      if (settled) return;
+      const threshold = positiveIntOrDefault(options.providerRateLimitFailFastCount, 0);
+      if (threshold <= 0) return;
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const count = providerRateLimit1302Count(`${stderr}\n${stdout}`);
+      if (count < threshold) return;
+      settled = true;
+      providerFailFast = classifyProviderError({ stdout, stderr, exitCode: 143 });
+      stopChild();
+    };
+
+    child.stdout.on("data", (chunk) => {
+      appendChunk(stdoutChunks, chunk);
+      tryProviderRateLimitFailFast();
+    });
+    child.stderr.on("data", (chunk) => {
+      appendChunk(stderrChunks, chunk);
+      tryProviderRateLimitFailFast();
+    });
+
+    const tryAccept = async () => {
+      if (settled) return;
+      if (!(acceptAfterMs > 0) || !options.auditValidatedArtifact) return;
+      try {
+        const audit = await options.auditValidatedArtifact();
+        if (audit?.ok === true && audit?.validation?.ok === true) {
+          settled = true;
+          acceptedAudit = audit;
+          stopChild();
+        }
+      } catch {
+        // The normal post-run audit remains authoritative.
+      }
+    };
+
+    if (timeout > 0) {
+      timeoutTimer = setTimeout(() => {
+        if (settled) return;
+        timedOut = true;
+        settled = true;
+        stopChild();
+      }, timeout);
+    }
+    if (acceptAfterMs > 0 && options.auditValidatedArtifact) {
+      acceptTimer = setTimeout(() => {
+        tryAccept();
+        acceptInterval = setInterval(tryAccept, auditIntervalMs);
+      }, acceptAfterMs);
+    }
+
+    child.on("error", (error) => {
+      cleanup();
+      resolveRun(finish({
+        ok: false,
+        stderr: error.message,
+        exit_code: 1,
+        timed_out: false,
+        timeout_ms: null,
+      }));
+    });
+
+    child.on("close", (code, signal) => {
+      cleanup();
+      if (acceptedAudit) {
+        resolveRun(finish({
+          ok: true,
+          exit_code: 0,
+          accepted_validated_artifact: true,
+          accepted_audit: acceptedAudit,
+        }));
+        return;
+      }
+      const exitCode = typeof code === "number" ? code : signalExitCode(signal);
+      if (providerFailFast) {
+        resolveRun(finish({
+          ok: false,
+          exit_code: exitCode,
+          timed_out: false,
+          timeout_ms: null,
+          provider_fail_fast: true,
+          provider_fail_fast_reason: "repeated_provider_rate_limit_1302",
+          provider_rate_limit_1302_count: providerFailFast.provider_rate_limit_1302_count,
+        }));
+        return;
+      }
+      resolveRun(finish({
+        ok: exitCode === 0,
+        exit_code: exitCode,
+        timed_out: timedOut,
+        timeout_ms: timedOut ? timeout : null,
+      }));
+    });
+  });
 }
 
 function enrichCliResult(result) {
@@ -651,6 +838,26 @@ function parseJsonObject(raw) {
   return isRecord(parsed) ? parsed : null;
 }
 
+function parsedJsonObjects(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return [];
+  const candidates = [trimmed];
+  for (const line of trimmed.split(/\r?\n/)) {
+    const candidate = line.trim();
+    if (candidate.startsWith("{") && candidate !== trimmed) candidates.push(candidate);
+  }
+  const objects = [];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (isRecord(parsed)) objects.push(parsed);
+    } catch {
+      // CLI stdout may include progress prose; non-JSON chunks are ignored.
+    }
+  }
+  return objects;
+}
+
 function finiteNumber(value) {
   if (value === null || value === undefined || typeof value === "boolean") return null;
   if (typeof value === "string" && value.trim() === "") return null;
@@ -666,13 +873,145 @@ function firstFiniteNumber(...values) {
   return null;
 }
 
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function tokenInteger(value, { positive = false } = {}) {
+  const number = finiteNumber(value);
+  if (number === null || !Number.isInteger(number)) return null;
+  if (positive && number <= 0) return null;
+  if (!positive && number < 0) return null;
+  return number;
+}
+
 function tailText(value, max = 2000) {
   return String(value ?? "").slice(-max);
 }
 
+function hasTokenUsageShape(usage) {
+  return [
+    "totalTokens",
+    "total_tokens",
+    "tokens_total",
+    "tokensTotal",
+    "tokensUsed",
+    "tokens_used",
+    "inputTokens",
+    "input_tokens",
+    "promptTokens",
+    "prompt_tokens",
+    "outputTokens",
+    "output_tokens",
+    "completionTokens",
+    "completion_tokens",
+    "reasoningTokens",
+    "reasoning_tokens",
+    "reasoning_output_tokens",
+    "cacheReadTokens",
+    "cache_read_tokens",
+    "cacheWriteTokens",
+    "cache_write_tokens",
+  ].some((key) => finiteNumber(usage?.[key]) !== null);
+}
+
+function pushTokenUsageCandidates(value, candidates, seen, depth = 0) {
+  if (depth > 5 || !isRecord(value) || seen.has(value)) return;
+  seen.add(value);
+  if (hasTokenUsageShape(value)) candidates.push(value);
+  for (const key of [
+    "usage",
+    "usage_normalized",
+    "usage_accounting",
+    "response",
+    "result",
+    "data",
+    "message",
+    "payload",
+  ]) {
+    const nested = value[key];
+    if (isRecord(nested)) pushTokenUsageCandidates(nested, candidates, seen, depth + 1);
+    else if (Array.isArray(nested)) {
+      for (const item of nested) pushTokenUsageCandidates(item, candidates, seen, depth + 1);
+    }
+  }
+}
+
+function tokenUsageCandidates(payload) {
+  const candidates = [];
+  pushTokenUsageCandidates(payload, candidates, new Set());
+  return candidates;
+}
+
+function tokenUsageCandidate(payload) {
+  const candidates = tokenUsageCandidates(payload);
+  return candidates.length > 0 ? candidates[candidates.length - 1] : null;
+}
+
+function normalizeTokenUsage(usage) {
+  const inputTokens = firstFiniteNumber(
+    usage.inputTokens,
+    usage.input_tokens,
+    usage.promptTokens,
+    usage.prompt_tokens,
+  );
+  const outputTokens = firstFiniteNumber(
+    usage.outputTokens,
+    usage.output_tokens,
+    usage.completionTokens,
+    usage.completion_tokens,
+  );
+  const reasoningTokens = firstFiniteNumber(
+    usage.reasoningTokens,
+    usage.reasoning_tokens,
+    usage.reasoning_output_tokens,
+    usage.output_tokens_details?.reasoning_tokens,
+    usage.completion_tokens_details?.reasoning_tokens,
+  );
+  const totalTokens = firstFiniteNumber(
+    usage.totalTokens,
+    usage.total_tokens,
+    usage.tokens_total,
+    usage.tokensTotal,
+    usage.tokensUsed,
+    usage.tokens_used,
+  ) ?? (
+    inputTokens !== null && outputTokens !== null
+      ? inputTokens + outputTokens
+      : inputTokens !== null && reasoningTokens !== null
+        ? inputTokens + reasoningTokens
+        : null
+  );
+  return {
+    total_tokens: totalTokens,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    reasoning_tokens: reasoningTokens,
+    cache_read_tokens: firstFiniteNumber(
+      usage.cacheReadTokens,
+      usage.cache_read_tokens,
+      usage.input_tokens_details?.cached_tokens,
+      usage.prompt_tokens_details?.cached_tokens,
+    ),
+    cache_write_tokens: firstFiniteNumber(usage.cacheWriteTokens, usage.cache_write_tokens),
+  };
+}
+
 function normalizedZcodeUsageFromStdout(stdout) {
-  const payload = parseJsonObject(stdout);
-  const usage = isRecord(payload?.usage) ? payload.usage : null;
+  const objects = parsedJsonObjects(stdout);
+  let selectedPayload = null;
+  let usage = null;
+  for (const payload of objects) {
+    const candidate = tokenUsageCandidate(payload);
+    if (candidate) {
+      selectedPayload = payload;
+      usage = candidate;
+    }
+  }
+  const payload = selectedPayload ?? (objects.length > 0 ? objects[objects.length - 1] : parseJsonObject(stdout));
   if (!usage) {
     return {
       payload,
@@ -682,19 +1021,120 @@ function normalizedZcodeUsageFromStdout(stdout) {
       response: payload?.response ?? null,
     };
   }
-  const normalized = {
-    total_tokens: firstFiniteNumber(usage.totalTokens, usage.total_tokens, usage.tokens_total, usage.tokensUsed),
-    input_tokens: firstFiniteNumber(usage.inputTokens, usage.input_tokens),
-    output_tokens: firstFiniteNumber(usage.outputTokens, usage.output_tokens),
-    cache_read_tokens: firstFiniteNumber(usage.cacheReadTokens, usage.cache_read_tokens),
-    cache_write_tokens: firstFiniteNumber(usage.cacheWriteTokens, usage.cache_write_tokens),
-  };
+  const normalized = normalizeTokenUsage(usage);
   return {
     payload,
     usage,
     normalized,
     projection: isRecord(payload?.projection) ? payload.projection : null,
     response: payload?.response ?? null,
+  };
+}
+
+function pathIsInside(childPath, parentPath) {
+  const rel = relative(parentPath, childPath);
+  return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function providerUsageLedgerTarget(env, packetPath) {
+  const raw = env?.ZCODE_PROVIDER_USAGE_LEDGER;
+  if (typeof raw !== "string" || !raw.trim()) {
+    return { path: null, status: "not_configured" };
+  }
+  const ledgerPath = resolve(raw.trim());
+  const rowDir = dirname(resolve(packetPath));
+  if (!pathIsInside(ledgerPath, rowDir)) {
+    return { path: ledgerPath, status: "out_of_scope" };
+  }
+  return { path: ledgerPath, status: "configured" };
+}
+
+function ledgerUsagePayload(normalized) {
+  const total = tokenInteger(normalized?.total_tokens, { positive: true });
+  if (total === null) return null;
+  const usage = { total_tokens: total };
+  for (const [target, source] of [
+    ["input_tokens", normalized?.input_tokens],
+    ["output_tokens", normalized?.output_tokens],
+    ["reasoning_tokens", normalized?.reasoning_tokens],
+    ["cache_read_tokens", normalized?.cache_read_tokens],
+    ["cache_write_tokens", normalized?.cache_write_tokens],
+  ]) {
+    const value = tokenInteger(source);
+    if (value !== null) usage[target] = value;
+  }
+  return usage;
+}
+
+function packetTaskId(packet) {
+  const strict = isRecord(packet?.strict_contract) ? packet.strict_contract : {};
+  const contract = isRecord(strict.task_contract) ? strict.task_contract : {};
+  return firstNonEmptyString(packet?.task_id, contract.task_id);
+}
+
+function packetRowId(packetPath) {
+  return firstNonEmptyString(basename(dirname(resolve(packetPath))));
+}
+
+function providerUsageLedgerRecord(runUsage, packet, packetPath, attempt) {
+  const usage = ledgerUsagePayload(runUsage?.normalized);
+  if (!usage) return null;
+  const payload = isRecord(runUsage?.payload) ? runUsage.payload : {};
+  const response = isRecord(runUsage?.response) ? runUsage.response : {};
+  const usagePayload = isRecord(runUsage?.usage) ? runUsage.usage : {};
+  const record = {
+    source_type: "provider_usage_ledger",
+    unit: "tokens",
+    usage,
+    provider_call_index: attempt,
+  };
+  const provider = firstNonEmptyString(
+    payload.provider,
+    payload.provider_id,
+    response.provider,
+    response.provider_id,
+    usagePayload.provider,
+    usagePayload.provider_id,
+  );
+  const model = firstNonEmptyString(
+    payload.model,
+    payload.model_id,
+    response.model,
+    response.model_id,
+    usagePayload.model,
+    usagePayload.model_id,
+  );
+  const taskId = packetTaskId(packet);
+  const rowId = packetRowId(packetPath);
+  if (provider) record.provider = provider;
+  if (model) record.model = model;
+  if (taskId) record.task_id = taskId;
+  else if (rowId) record.row_id = rowId;
+  return record;
+}
+
+async function appendProviderUsageLedger(runUsage, { env = process.env, packetPath, packet, attempt }) {
+  const target = providerUsageLedgerTarget(env, packetPath);
+  if (target.status !== "configured") {
+    return { appended: false, status: target.status, path: target.path ?? null };
+  }
+  const record = providerUsageLedgerRecord(runUsage, packet, packetPath, attempt);
+  if (!record) {
+    return { appended: false, status: "no_measured_token_usage", path: target.path };
+  }
+  await mkdir(dirname(target.path), { recursive: true, mode: 0o700 });
+  const handle = await open(target.path, "a", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(record)}\n`);
+  } finally {
+    await handle.close();
+  }
+  return {
+    appended: true,
+    status: "appended",
+    path: target.path,
+    source_type: record.source_type,
+    total_tokens: record.usage.total_tokens,
   };
 }
 
@@ -1140,23 +1580,45 @@ function deriveQuotaUsage(beforeSnapshot, afterSnapshot) {
 function missingUsageReason(finalResult) {
   if (finalResult?.provider_error) return "provider_error_without_zcode_cli_usage";
   if (finalResult?.cli_ok === false || finalResult?.ok === false) return "zcode_cli_result_missing_usage";
-  return "zcode_cli_usage_missing";
+  return "provider_success_without_usage_payload";
 }
 
-function buildUsageAccounting(finalResult, beforeSnapshot, afterSnapshot) {
+function buildUsageAccounting(finalResult, beforeSnapshot, afterSnapshot, options = {}) {
   const runUsage = normalizedZcodeUsageFromStdout(finalResult?.stdout ?? "");
   const quota = deriveQuotaUsage(beforeSnapshot, afterSnapshot);
-  const usageAvailable = Boolean(runUsage.normalized);
+  const outputPath = options.outputPath ?? null;
+  const hasDbDelta = Boolean(options.dbDeltaBefore || options.dbDeltaAfter);
+  const measuredDbDelta = outputPath && hasDbDelta
+    ? measuredDbDeltaUsage(options.dbDeltaAfter, outputPath)
+    : null;
+  const unavailableDbDelta = outputPath && hasDbDelta
+    ? unavailableDbDeltaUsage({
+      before: options.dbDeltaBefore,
+      after: options.dbDeltaAfter,
+      outputPath,
+    })
+    : null;
+  const dbDelta = measuredDbDelta ?? unavailableDbDelta;
+  const dbDeltaRequired = outputPath && hasDbDelta;
+  const usageAvailable = dbDeltaRequired ? Boolean(measuredDbDelta) : Boolean(runUsage.normalized);
+  const stdoutTotal = runUsage.normalized?.total_tokens ?? null;
   return {
     usage_available: usageAvailable,
-    no_usage_reason: usageAvailable ? null : missingUsageReason(finalResult),
-    tokens_source: runUsage.normalized ? "zcode_cli_json_usage" : null,
-    tokens_used: runUsage.normalized?.total_tokens ?? null,
-    tokens_total: runUsage.normalized?.total_tokens ?? null,
-    input_tokens: runUsage.normalized?.input_tokens ?? null,
-    output_tokens: runUsage.normalized?.output_tokens ?? null,
-    cache_read_tokens: runUsage.normalized?.cache_read_tokens ?? null,
-    cache_write_tokens: runUsage.normalized?.cache_write_tokens ?? null,
+    no_usage_reason: usageAvailable ? null : dbDelta?.no_usage_reason ?? missingUsageReason(finalResult),
+    ...(dbDelta ?? {}),
+    tokens_source: measuredDbDelta?.tokens_source ?? (runUsage.normalized && !dbDeltaRequired ? "zcode_cli_json_usage" : null),
+    tokens_used: measuredDbDelta?.tokens_used ?? (dbDeltaRequired ? null : stdoutTotal),
+    tokens_total: measuredDbDelta?.tokens_total ?? (dbDeltaRequired ? null : stdoutTotal),
+    input_tokens: measuredDbDelta?.input_tokens ?? (dbDeltaRequired ? null : runUsage.normalized?.input_tokens ?? null),
+    output_tokens: measuredDbDelta?.output_tokens ?? (dbDeltaRequired ? null : runUsage.normalized?.output_tokens ?? null),
+    reasoning_tokens: measuredDbDelta?.reasoning_tokens ?? (dbDeltaRequired ? null : runUsage.normalized?.reasoning_tokens ?? null),
+    cache_read_tokens: measuredDbDelta?.cache_read_tokens ?? (dbDeltaRequired ? null : runUsage.normalized?.cache_read_tokens ?? null),
+    cache_write_tokens: measuredDbDelta?.cache_write_tokens ?? (dbDeltaRequired ? null : runUsage.normalized?.cache_write_tokens ?? null),
+    worker_usage_status: measuredDbDelta?.worker_usage_status ?? (dbDeltaRequired ? unavailableDbDelta?.worker_usage_status : (runUsage.normalized ? "measured" : null)),
+    worker_usage_unit: measuredDbDelta?.worker_usage_unit ?? (dbDeltaRequired ? unavailableDbDelta?.worker_usage_unit : (runUsage.normalized ? "tokens" : null)),
+    worker_total_tokens: measuredDbDelta?.worker_total_tokens ?? (dbDeltaRequired ? null : stdoutTotal),
+    worker_usage_source_path: measuredDbDelta?.worker_usage_source_path ?? (dbDeltaRequired ? null : null),
+    worker_usage_capture_method: measuredDbDelta?.worker_usage_capture_method ?? (dbDeltaRequired ? MODEL_USAGE_DB_DELTA_SOURCE_TYPE : (runUsage.normalized ? "zcode_cli_json_usage" : null)),
     quota_source: quota.source,
     quota_provider: quota.provider,
     quota_percent_direction: quota.quota_percent_direction,
@@ -1419,14 +1881,20 @@ function compactAttemptRecord(attempt, index) {
     cli_ok: attempt.cli_ok,
     exit_code: attempt.exit_code,
     provider_error: attempt.provider_error,
+    provider_error_kind: attempt.provider_error_kind,
     provider_code: attempt.provider_code,
     provider_message: attempt.provider_message,
     provider_id: attempt.provider_id,
     provider_kind: attempt.provider_kind,
+    provider_rate_limit_1302: attempt.provider_rate_limit_1302,
+    provider_rate_limit_1302_count: attempt.provider_rate_limit_1302_count,
+    provider_fail_fast: attempt.provider_fail_fast,
+    provider_fail_fast_reason: attempt.provider_fail_fast_reason,
     retryable_provider_error: attempt.retryable_provider_error,
     usage_available: usageAvailable,
     no_usage_reason: usageAvailable ? null : missingUsageReason(attempt),
     tokens_total: runUsage.normalized?.total_tokens ?? null,
+    provider_usage_ledger: attempt.provider_usage_ledger ?? null,
     supervisor_state: attempt.supervisor_state,
     changed_count: attempt.audit?.changed_count ?? null,
     validation_ok: attempt.audit?.validation?.ok ?? null,
@@ -1438,14 +1906,126 @@ function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
+function isValidationFailure(audit) {
+  if (!audit || audit.validation?.ok !== false) return false;
+  if (!Array.isArray(audit.violations)) return true;
+  return audit.violations.some((violation) => violation?.type === "validation_failed");
+}
+
+function isRepairableValidationFailure(audit) {
+  if (!isValidationFailure(audit)) return false;
+  if (!Array.isArray(audit.violations) || audit.violations.length === 0) return true;
+  return audit.violations.every((violation) => violation?.type === "validation_failed");
+}
+
+function validationRepairPrompt(packet, audit, attemptNumber) {
+  const validation = audit.validation ?? {};
+  const stderrTail = validation.stderr_tail ?? "";
+  const stdoutTail = validation.stdout_tail ?? "";
+  const allowed = Array.isArray(packet.allowed_files) ? packet.allowed_files.join(", ") : "packet allowed files only";
+  return [
+    "You are a ZCode worker under Codex audit.",
+    `This is repair attempt ${attemptNumber} for the same bounded implementation packet.`,
+    "",
+    `Original objective: ${packet.objective ?? "unspecified"}`,
+    `Allowed files: ${allowed}`,
+    `Validation command (you may run this exact command as a black-box check; do not inspect validator source): ${packet.validation ?? "unspecified"}`,
+    "",
+    "The previous attempt edited files but failed supervisor validation.",
+    "Use the black-box validation output below, the project files, and the original objective to make the smallest correction.",
+    "If validation output shows expected vs actual values, treat the expected value as the acceptance contract and update implementation behavior to match it exactly.",
+    "Prefer the validator evidence over speculative reasoning about edge cases, rounding, formatting, ordering, or boundary behavior.",
+    "After editing, run the exact validation command if the environment permits it, then keep fixing until it passes or you clearly report the blocker.",
+    "Do not broaden scope. Do not edit tests unless they are explicitly allowed. Do not read secrets or files outside the workspace.",
+    "",
+    "Validation stdout tail:",
+    stdoutTail || "(empty)",
+    "",
+    "Validation stderr tail:",
+    stderrTail || "(empty)",
+    "",
+    "Final report: changed files, validation expectation addressed, remaining risks, accept/inspect/reject recommendation.",
+  ].join("\n");
+}
+
+async function writeRunPacketProgress(args, payload) {
+  if (!args.out) return;
+  const outputPath = resolve(args.out);
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function signalExitCode(signalName) {
+  if (signalName === "SIGINT") return 130;
+  if (signalName === "SIGTERM") return 143;
+  return 1;
+}
+
+function runPacketTerminalPayload({
+  status,
+  packetPath,
+  workspace,
+  attempts,
+  maxAttempts,
+  currentAttempt,
+  signalName = null,
+  timedOut = false,
+  error = null,
+}) {
+  const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+  return {
+    ok: false,
+    cli_ok: false,
+    exit_code: signalName ? signalExitCode(signalName) : 1,
+    status,
+    supervisor_state: status,
+    packet: packetPath,
+    workspace,
+    attempts: attempts.length,
+    attempt_count: attempts.length,
+    current_attempt: currentAttempt,
+    max_attempts: maxAttempts,
+    signal: signalName,
+    timed_out: timedOut,
+    validation_ok: lastAttempt?.audit?.validation?.ok ?? null,
+    audit_ok: lastAttempt?.audit?.ok ?? null,
+    changed_count: lastAttempt?.audit?.changed_count ?? null,
+    attempt_results: attempts.map(compactAttemptRecord),
+    error: error?.message ?? null,
+  };
+}
+
+function installRunPacketSignalHandlers(writeTerminal) {
+  const onSigterm = () => {
+    writeTerminal("aborted", { signalName: "SIGTERM" })
+      .catch((error) => console.error(error.message))
+      .finally(() => process.exit(signalExitCode("SIGTERM")));
+  };
+  const onSigint = () => {
+    writeTerminal("aborted", { signalName: "SIGINT" })
+      .catch((error) => console.error(error.message))
+      .finally(() => process.exit(signalExitCode("SIGINT")));
+  };
+  process.once("SIGTERM", onSigterm);
+  process.once("SIGINT", onSigint);
+  return () => {
+    process.off("SIGTERM", onSigterm);
+    process.off("SIGINT", onSigint);
+  };
+}
+
 async function cliPrompt(args) {
   await ensureCliPromptReady(args);
   const promptText = await readPrompt(args);
   const workspace = resolve(args.workspace ?? process.cwd());
   const cliArgs = buildPromptArgs(args, promptText, workspace);
+  const providerRateLimitFailFastCount = args.providerRateLimitFailFast === false
+    ? 0
+    : positiveIntOrDefault(args.providerRateLimitFailFastCount, DEFAULT_PROVIDER_RATE_LIMIT_FAIL_FAST_COUNT);
   const result = await runZcodeCli(cliArgs, {
     cwd: workspace,
     timeoutMs: args.timeoutMs ?? PROMPT_TIMEOUT_MS,
+    providerRateLimitFailFastCount,
   });
   await printCliResult(result, args.out);
 }
@@ -1455,6 +2035,687 @@ async function visionPreflightCommand(args) {
   const serviceName = args.visionService ?? DEFAULT_VISION_SERVICE;
   const payload = await inspectVisionServices(args, workspace, serviceName);
   await printJsonPayload(payload, args.out);
+}
+
+function outputPathForAppRunPacket(args, packetPath) {
+  return args.out ? resolve(args.out) : join(dirname(resolve(packetPath)), "zcode-run.json");
+}
+
+function relativeWorkerUsagePath(path, outputPath) {
+  if (!path) return null;
+  const relativePath = relative(dirname(outputPath), path);
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) return String(path);
+  return relativePath;
+}
+
+function appRunPacketDbDeltaPaths(args, packetPath) {
+  const outputPath = outputPathForAppRunPacket(args, packetPath);
+  const rowDir = dirname(outputPath);
+  return {
+    outputPath,
+    rowDir,
+    beforePath: join(rowDir, MODEL_USAGE_DB_DELTA_BEFORE_NAME),
+    afterPath: join(rowDir, MODEL_USAGE_DB_DELTA_AFTER_NAME),
+    ledgerPath: join(rowDir, WORKER_USAGE_LEDGER_NAME),
+  };
+}
+
+function appRunPacketDbArg(args) {
+  return args.modelUsageDb ? ["--db", resolve(args.modelUsageDb)] : [];
+}
+
+async function runModelUsageDbDelta(commandArgs, outPath) {
+  try {
+    await execFileAsync("python3", [MODEL_USAGE_DB_DELTA_SCRIPT, ...commandArgs], {
+      env: sanitizeChildEnv(),
+      maxBuffer: 5 * 1024 * 1024,
+      timeout: 30_000,
+    });
+    return await readJsonFile(outPath);
+  } catch (error) {
+    return {
+      source_type: MODEL_USAGE_DB_DELTA_SOURCE_TYPE,
+      unit: "tokens",
+      status: "unavailable",
+      usage: {},
+      no_usage_reason: "zcode_model_usage_db_delta_command_failed",
+      error: error.message,
+    };
+  }
+}
+
+async function captureAppRunPacketDbDeltaBefore(args, packetPath) {
+  const paths = appRunPacketDbDeltaPaths(args, packetPath);
+  await mkdir(paths.rowDir, { recursive: true });
+  const before = await runModelUsageDbDelta(
+    ["before", ...appRunPacketDbArg(args), "--out", paths.beforePath],
+    paths.beforePath,
+  );
+  return { paths, before };
+}
+
+async function captureAppRunPacketDbDeltaAfter(args, packetPath) {
+  const paths = appRunPacketDbDeltaPaths(args, packetPath);
+  const after = await runModelUsageDbDelta(
+    [
+      "after",
+      ...appRunPacketDbArg(args),
+      "--before",
+      paths.beforePath,
+      "--ledger",
+      paths.ledgerPath,
+      "--row-dir",
+      paths.rowDir,
+      "--out",
+      paths.afterPath,
+    ],
+    paths.afterPath,
+  );
+  return { paths, after };
+}
+
+function dbDeltaRowIds(delta) {
+  return Array.isArray(delta?.row_ids)
+    ? delta.row_ids.map((value) => tokenInteger(value)).filter((value) => value !== null)
+    : null;
+}
+
+function dbDeltaRows(delta) {
+  return Array.isArray(delta?.rows) ? delta.rows : null;
+}
+
+function measuredDbDeltaUsage(delta, outputPath) {
+  const total = tokenInteger(delta?.total_tokens ?? delta?.usage?.total_tokens, { positive: true });
+  if (delta?.status !== "measured" || total === null) return null;
+  const usage = isRecord(delta.usage) ? delta.usage : {};
+  return {
+    usage_available: true,
+    no_usage_reason: null,
+    tokens_source: MODEL_USAGE_DB_DELTA_SOURCE_TYPE,
+    tokens_used: total,
+    tokens_total: total,
+    input_tokens: tokenInteger(usage.input_tokens),
+    output_tokens: tokenInteger(usage.output_tokens),
+    reasoning_tokens: tokenInteger(usage.reasoning_tokens),
+    cache_read_tokens: tokenInteger(usage.cache_read_tokens),
+    cache_write_tokens: tokenInteger(usage.cache_write_tokens),
+    source_type: MODEL_USAGE_DB_DELTA_SOURCE_TYPE,
+    worker_usage_status: "measured",
+    worker_usage_unit: "tokens",
+    worker_total_tokens: total,
+    worker_usage_source_path: relativeWorkerUsagePath(join(dirname(outputPath), WORKER_USAGE_LEDGER_NAME), outputPath),
+    worker_usage_capture_method: MODEL_USAGE_DB_DELTA_SOURCE_TYPE,
+    worker_usage_ledger_status: "appended",
+    worker_usage_isolation_required: true,
+    measured_app_backed_tokens: true,
+    before_max_rowid: tokenInteger(delta.before_max_rowid),
+    after_max_rowid: tokenInteger(delta.after_max_rowid),
+    row_ids: dbDeltaRowIds(delta),
+    row_count: tokenInteger(delta.row_count),
+    rows: dbDeltaRows(delta),
+    total_tokens: total,
+    usage,
+    db_delta_status: "measured",
+  };
+}
+
+function unavailableDbDeltaUsage({ before = null, after = null, outputPath }) {
+  const source = after ?? before ?? {};
+  return {
+    usage_available: false,
+    no_usage_reason: source.no_usage_reason ?? "app_cdp_db_delta_unavailable",
+    tokens_source: null,
+    tokens_used: null,
+    tokens_total: null,
+    input_tokens: null,
+    output_tokens: null,
+    reasoning_tokens: null,
+    cache_read_tokens: null,
+    cache_write_tokens: null,
+    source_type: MODEL_USAGE_DB_DELTA_SOURCE_TYPE,
+    worker_usage_status: "unavailable",
+    worker_usage_unit: "unknown",
+    worker_total_tokens: null,
+    worker_usage_source_path: null,
+    worker_usage_capture_method: MODEL_USAGE_DB_DELTA_SOURCE_TYPE,
+    worker_usage_ledger_status: source.status ?? "unavailable",
+    worker_usage_isolation_required: true,
+    measured_app_backed_tokens: false,
+    before_max_rowid: tokenInteger(source.before_max_rowid ?? before?.before_max_rowid),
+    after_max_rowid: tokenInteger(source.after_max_rowid),
+    row_ids: dbDeltaRowIds(source),
+    row_count: tokenInteger(source.row_count),
+    rows: dbDeltaRows(source),
+    total_tokens: null,
+    usage: null,
+    db_delta_status: source.status ?? "unavailable",
+    db_delta_output_path: after ? relativeWorkerUsagePath(join(dirname(outputPath), MODEL_USAGE_DB_DELTA_AFTER_NAME), outputPath) : null,
+  };
+}
+
+function appRunPacketUsageAccounting({ packetPath, args, before = null, after = null } = {}) {
+  const outputPath = outputPathForAppRunPacket(args ?? {}, packetPath);
+  const measured = measuredDbDeltaUsage(after, outputPath);
+  const dbDelta = measured ?? unavailableDbDeltaUsage({ before, after, outputPath });
+  return {
+    ...dbDelta,
+    quota_source: null,
+    quota_provider: null,
+    quota_percent_direction: null,
+    quota_percent_before: null,
+    quota_percent_after: null,
+    quota_percent_used: null,
+    quota_percent_status: "not_measured",
+    quota_percent_unavailable_reason: "app_cdp_scaffold_does_not_call_provider",
+    quota_windows: {},
+  };
+}
+
+function appRunPacketWorkerUsageFields(usageAccounting) {
+  return {
+    source_type: MODEL_USAGE_DB_DELTA_SOURCE_TYPE,
+    worker_usage_status: usageAccounting.worker_usage_status,
+    worker_usage_unit: usageAccounting.worker_usage_unit,
+    worker_total_tokens: usageAccounting.worker_total_tokens,
+    worker_usage_source_path: usageAccounting.worker_usage_source_path,
+    worker_usage_capture_method: usageAccounting.worker_usage_capture_method,
+  };
+}
+
+function appRunPacketExpectedWorkspace(args, packet) {
+  return resolve(args.expectedWorkspace ?? packet.workspace);
+}
+
+function workspaceBindingExpression(expectedWorkspace) {
+  return `(() => {
+    // workspace binding preflight
+    const expected = ${JSON.stringify(expectedWorkspace)};
+    const pathLike = (value) => typeof value === 'string' && (
+      value.startsWith('/') ||
+      /^[A-Za-z]:[\\\\/]/.test(value) ||
+      value.includes('/workspaces/') ||
+      value.includes('\\\\workspaces\\\\')
+    );
+    const clean = (value) => typeof value === 'string' ? value.trim() : null;
+    const direct = window.__ZCODE_APP_WORKSPACE_BINDING__;
+    if (direct && typeof direct === 'object') {
+      return { ...direct, expected_workspace: expected, source: direct.source || 'window.__ZCODE_APP_WORKSPACE_BINDING__' };
+    }
+    const candidates = [];
+    const add = (source, value, confidence = 'weak') => {
+      const text = clean(value);
+      if (!text || !pathLike(text)) return;
+      candidates.push({ source, value: text, confidence });
+    };
+    for (const [name, value] of [
+      ['window.__ZCODE_ACTIVE_WORKSPACE__', window.__ZCODE_ACTIVE_WORKSPACE__],
+      ['window.__ZCODE_CURRENT_WORKSPACE__', window.__ZCODE_CURRENT_WORKSPACE__],
+      ['window.__ZCODE_WORKSPACE__', window.__ZCODE_WORKSPACE__],
+      ['window.zcode.workspace', window.zcode?.workspace],
+      ['window.zcode.currentWorkspace', window.zcode?.currentWorkspace],
+      ['window.zcode.workspacePath', window.zcode?.workspacePath],
+      ['window.zcode.cwd', window.zcode?.cwd],
+    ]) {
+      add(name, value, 'strong');
+    }
+    for (const selector of [
+      '[data-active="true"][data-workspace-path]',
+      '[aria-current="page"][data-workspace-path]',
+      '[data-current-workspace]',
+      '[data-active-workspace]',
+    ]) {
+      for (const node of Array.from(document.querySelectorAll(selector))) {
+        add(selector, node.getAttribute('data-workspace-path') || node.getAttribute('data-current-workspace') || node.getAttribute('data-active-workspace'), 'strong');
+      }
+    }
+    for (const store of [window.localStorage, window.sessionStorage]) {
+      if (!store) continue;
+      for (let index = 0; index < store.length; index += 1) {
+        const key = store.key(index) || '';
+        if (!/(active|current|workspace|project|cwd|root)/i.test(key)) continue;
+        const raw = store.getItem(key);
+        add(\`\${store === window.localStorage ? 'localStorage' : 'sessionStorage'}:\${key}\`, raw, /active|current|cwd|root/i.test(key) ? 'strong' : 'weak');
+        try {
+          const parsed = JSON.parse(raw);
+          const stack = [parsed];
+          while (stack.length) {
+            const item = stack.pop();
+            if (typeof item === 'string') add(\`\${store === window.localStorage ? 'localStorage' : 'sessionStorage'}:\${key}\`, item, 'strong');
+            else if (item && typeof item === 'object') {
+              for (const [childKey, childValue] of Object.entries(item)) {
+                if (/(active|current|workspace|path|cwd|root)/i.test(childKey)) stack.push(childValue);
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+    const strong = candidates.filter((candidate) => candidate.confidence === 'strong');
+    const exact = strong.find((candidate) => candidate.value === expected);
+    if (exact) {
+      return {
+        ok: true,
+        bound: true,
+        status: 'app_cdp_workspace_bound',
+        expected_workspace: expected,
+        detected_workspace: exact.value,
+        evidence_source: exact.source,
+        candidates: strong.slice(0, 5),
+      };
+    }
+    if (strong.length) {
+      return {
+        ok: false,
+        bound: false,
+        status: 'app_cdp_workspace_mismatch',
+        expected_workspace: expected,
+        detected_workspace: strong[0].value,
+        evidence_source: strong[0].source,
+        candidates: strong.slice(0, 5),
+      };
+    }
+    return {
+      ok: false,
+      bound: null,
+      status: 'app_cdp_workspace_unknown',
+      expected_workspace: expected,
+      detected_workspace: null,
+      evidence_source: null,
+      candidates: candidates.slice(0, 5),
+    };
+  })()`;
+}
+
+function normalizeWorkspaceEvidencePath(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const trimmed = value.trim();
+  if (isAbsolute(trimmed) || /^[A-Za-z]:[\\/]/.test(trimmed)) return resolve(trimmed);
+  return trimmed;
+}
+
+function normalizeAppWorkspaceBinding(raw, expectedWorkspace) {
+  const expected = resolve(expectedWorkspace);
+  const detected = normalizeWorkspaceEvidencePath(
+    raw?.detected_workspace ?? raw?.detectedWorkspace ?? raw?.workspace ?? raw?.cwd ?? raw?.path,
+  );
+  const rawStatus = typeof raw?.status === "string" ? raw.status : null;
+  const detectedMatches = detected !== null && resolve(detected) === expected;
+  let status;
+  if (detectedMatches && raw?.bound !== false) {
+    status = "app_cdp_workspace_bound";
+  } else if (rawStatus === "app_cdp_workspace_mismatch") {
+    status = "app_cdp_workspace_mismatch";
+  } else if (rawStatus === "app_cdp_workspace_not_bound" || rawStatus === "not_bound" || raw?.bound === false) {
+    status = "app_cdp_workspace_not_bound";
+  } else if (detected !== null) {
+    status = "app_cdp_workspace_mismatch";
+  } else {
+    status = "app_cdp_workspace_unknown";
+  }
+  return {
+    ok: status === "app_cdp_workspace_bound",
+    status,
+    expected_workspace: expected,
+    detected_workspace: detected,
+    raw_status: rawStatus,
+    reason: raw?.reason ?? null,
+    evidence_source: raw?.evidence_source ?? raw?.source ?? null,
+    candidates: Array.isArray(raw?.candidates) ? raw.candidates.slice(0, 5) : [],
+  };
+}
+
+async function inspectAppWorkspaceBinding(port, expectedWorkspace) {
+  try {
+    const result = await runtimeEvaluate(port, workspaceBindingExpression(expectedWorkspace));
+    return normalizeAppWorkspaceBinding(result.value ?? {}, expectedWorkspace);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "app_cdp_workspace_unknown",
+      expected_workspace: resolve(expectedWorkspace),
+      detected_workspace: null,
+      raw_status: null,
+      reason: error.message,
+      evidence_source: "cdp_runtime_evaluate",
+      candidates: [],
+    };
+  }
+}
+
+function emptyChangedFiles(changedFiles) {
+  if (!isRecord(changedFiles)) return true;
+  return Object.values(changedFiles).every((value) => !Array.isArray(value) || value.length === 0);
+}
+
+function appRunPacketNoWorkspaceChangeWithNoDbRows(basePayload, audit) {
+  const changedCount = tokenInteger(audit?.changed_count);
+  const noWorkspaceChange = changedCount === 0 || (
+    changedCount === null && emptyChangedFiles(audit?.changed_files)
+  );
+  const rowIds = Array.isArray(basePayload.row_ids) ? basePayload.row_ids : [];
+  const noDbRows = rowIds.length === 0
+    && basePayload.usage_accounting?.no_usage_reason === "zcode_model_usage_no_new_rows";
+  return Boolean(noWorkspaceChange && noDbRows);
+}
+
+function appRunPacketWorkspaceBlockedPayload(basePayload, workspaceBinding) {
+  return {
+    ...basePayload,
+    status: workspaceBinding.status,
+    supervisor_state: workspaceBinding.status,
+    exit_code: 1,
+    expected_workspace: workspaceBinding.expected_workspace,
+    detected_workspace: workspaceBinding.detected_workspace,
+    workspace_binding_status: workspaceBinding.status,
+    workspace_binding_ok: false,
+    app_cdp: {
+      ...basePayload.app_cdp,
+      submit_allowed: true,
+      submit_blocked_reason: workspaceBinding.status,
+      workspace_binding_required: true,
+      expected_workspace: workspaceBinding.expected_workspace,
+      detected_workspace: workspaceBinding.detected_workspace,
+      workspace_binding_status: workspaceBinding.status,
+      workspace_binding: workspaceBinding,
+    },
+  };
+}
+
+function appRunPacketWorkspacePreflightPayload(basePayload, workspaceBinding) {
+  return {
+    ...basePayload,
+    ok: workspaceBinding.ok,
+    exit_code: workspaceBinding.ok ? 0 : 1,
+    status: workspaceBinding.status,
+    supervisor_state: workspaceBinding.status,
+    expected_workspace: workspaceBinding.expected_workspace,
+    detected_workspace: workspaceBinding.detected_workspace,
+    workspace_binding_status: workspaceBinding.status,
+    workspace_binding_ok: workspaceBinding.ok,
+    app_cdp: {
+      ...basePayload.app_cdp,
+      submit_allowed: false,
+      submit_blocked_reason: "preflight_only",
+      preflight_only: true,
+      workspace_binding_required: true,
+      expected_workspace: workspaceBinding.expected_workspace,
+      detected_workspace: workspaceBinding.detected_workspace,
+      workspace_binding_status: workspaceBinding.status,
+      workspace_binding: workspaceBinding,
+    },
+  };
+}
+
+function appRunPacketBasePayload({
+  packetPath,
+  packet,
+  workspace,
+  expectedWorkspace,
+  workspaceBinding = null,
+  args,
+  status,
+  before = null,
+  after = null,
+}) {
+  const usageAccounting = appRunPacketUsageAccounting({ packetPath, args, before, after });
+  const expected = expectedWorkspace ?? workspace;
+  const detected = workspaceBinding?.detected_workspace ?? null;
+  return {
+    ok: false,
+    cli_ok: false,
+    exit_code: 1,
+    status,
+    supervisor_state: status,
+    packet: packetPath,
+    workspace,
+    expected_workspace: expected,
+    detected_workspace: detected,
+    workspace_binding_status: workspaceBinding?.status ?? null,
+    workspace_binding_ok: workspaceBinding?.ok ?? null,
+    mode: mapMode(args.mode ?? packet.mode),
+    worker_execution_backend: "zcode_app_cdp",
+    worker_finalization: packet.worker_finalization ?? "zcode_owned",
+    prompt_chars: packet.prompt?.length ?? 0,
+    attempts: 1,
+    attempt_count: 1,
+    current_attempt: 1,
+    max_attempts: 1,
+    timed_out: false,
+    timeout_ms: args.timeoutMs ?? 300_000,
+    validation: null,
+    validation_ok: null,
+    validation_rc: null,
+    audit: null,
+    audit_ok: null,
+    changed_count: null,
+    changed_files: null,
+    route_rc: null,
+    acceptance_rc: null,
+    final_validation_rc: null,
+    strict_accepted: null,
+    provider_status: "not_invoked_by_app_runner_scaffold",
+    provider_error: false,
+    provider_error_kind: null,
+    provider_code: null,
+    provider_message: null,
+    ...appRunPacketWorkerUsageFields(usageAccounting),
+    before_max_rowid: usageAccounting.before_max_rowid,
+    after_max_rowid: usageAccounting.after_max_rowid,
+    row_ids: usageAccounting.row_ids,
+    row_count: usageAccounting.row_count,
+    rows: usageAccounting.rows,
+    total_tokens: usageAccounting.total_tokens,
+    usage_available: usageAccounting.usage_available,
+    no_usage_reason: usageAccounting.no_usage_reason,
+    usage: usageAccounting.usage,
+    usage_normalized: usageAccounting.usage,
+    usage_source_path: usageAccounting.worker_usage_source_path,
+    usage_snapshots: {
+      before,
+      after,
+    },
+    usage_accounting: usageAccounting,
+    safe_to_retry_later: false,
+    app_cdp: {
+      port: args.port,
+      submit_allowed: false,
+      submit_guard: "requires --allow-submit and ZCODE_APP_CDP_ALLOW_SUBMIT=1",
+      workspace_binding_required: true,
+      expected_workspace: expected,
+      detected_workspace: detected,
+      workspace_binding_status: workspaceBinding?.status ?? null,
+      workspace_binding: workspaceBinding,
+      commands: ["set-composer", "click Send", "wait-idle"],
+    },
+  };
+}
+
+function appRunPacketPayloadFromAudit({ basePayload, audit, waitResult, submitResult, sendResult }) {
+  const validation = audit?.validation ?? null;
+  const timedOut = waitResult?.reason === "timeout";
+  const waitingApproval = waitResult?.reason === "awaiting_approval";
+  const validationOk = validation?.ok ?? null;
+  const validationRc = validation?.returncode ?? null;
+  const auditOk = audit?.ok ?? null;
+  const usageMeasured = basePayload.worker_usage_status === "measured"
+    && basePayload.worker_usage_unit === "tokens"
+    && tokenInteger(basePayload.worker_total_tokens, { positive: true }) !== null;
+  const ok = Boolean(waitResult?.ok && auditOk && validationOk && usageMeasured);
+  const workspaceBindingFailure = !ok && appRunPacketNoWorkspaceChangeWithNoDbRows(basePayload, audit);
+  const strictAccepted = audit?.strict_contract?.accepted ?? (workspaceBindingFailure ? false : null);
+  const status = ok
+    ? "success"
+    : timedOut
+      ? "app_cdp_timeout"
+      : waitingApproval
+        ? "app_cdp_awaiting_approval"
+        : workspaceBindingFailure
+          ? "app_cdp_workspace_not_bound"
+          : auditOk && validationOk && !usageMeasured
+            ? "app_cdp_usage_unavailable"
+            : "app_cdp_audit_failed";
+  return {
+    ...basePayload,
+    ok,
+    cli_ok: false,
+    exit_code: ok ? 0 : 1,
+    status,
+    supervisor_state: status,
+    timed_out: timedOut,
+    validation,
+    validation_ok: validationOk,
+    validation_rc: validationRc,
+    audit,
+    audit_ok: auditOk,
+    changed_count: audit?.changed_count ?? null,
+    changed_files: audit?.changed_files ?? null,
+    route_rc: null,
+    acceptance_rc: null,
+    final_validation_rc: validationRc,
+    strict_accepted: strictAccepted,
+    app_cdp: {
+      ...basePayload.app_cdp,
+      submit_allowed: true,
+      set_composer_ok: submitResult?.value?.ok ?? null,
+      send_ok: sendResult?.value?.ok ?? null,
+      wait_idle_ok: waitResult?.ok ?? null,
+      wait_idle_reason: waitResult?.reason ?? null,
+      wait_idle_summary: waitResult?.summary ?? null,
+      usage_required_for_success: true,
+      workspace_binding_failure_inferred: workspaceBindingFailure,
+    },
+  };
+}
+
+async function appRunPacket(args) {
+  if (!args.packet) throw new Error("--packet is required");
+  const packetPath = resolve(args.packet);
+  const packet = JSON.parse(await readFile(packetPath, "utf8"));
+  if (!packet.prompt) throw new Error(`packet is missing prompt: ${packetPath}`);
+  const workspace = resolve(packet.workspace);
+  const expectedWorkspace = appRunPacketExpectedWorkspace(args, packet);
+  let basePayload = appRunPacketBasePayload({
+    packetPath,
+    packet,
+    workspace,
+    expectedWorkspace,
+    args,
+    status: "app_cdp_submit_not_allowed",
+  });
+  const submitAllowed = args.allowSubmit === true && process.env.ZCODE_APP_CDP_ALLOW_SUBMIT === "1";
+  let workspaceBinding = null;
+  if (args.requireWorkspaceBound || submitAllowed) {
+    workspaceBinding = await inspectAppWorkspaceBinding(args.port, expectedWorkspace);
+    basePayload = appRunPacketBasePayload({
+      packetPath,
+      packet,
+      workspace,
+      expectedWorkspace,
+      workspaceBinding,
+      args,
+      status: "app_cdp_submit_not_allowed",
+    });
+    if (!submitAllowed && args.requireWorkspaceBound) {
+      await printJsonPayload(appRunPacketWorkspacePreflightPayload(basePayload, workspaceBinding), args.out);
+      return;
+    }
+    if (!workspaceBinding.ok) {
+      await printJsonPayload(appRunPacketWorkspaceBlockedPayload(basePayload, workspaceBinding), args.out);
+      return;
+    }
+  }
+  if (!submitAllowed) {
+    await printJsonPayload(basePayload, args.out);
+    return;
+  }
+
+  const dbDeltaBefore = await captureAppRunPacketDbDeltaBefore(args, packetPath);
+  basePayload = appRunPacketBasePayload({
+    packetPath,
+    packet,
+    workspace,
+    expectedWorkspace,
+    workspaceBinding,
+    args,
+    status: "app_cdp_submit_not_allowed",
+    before: dbDeltaBefore.before,
+  });
+  if (dbDeltaBefore.before.status !== "available") {
+    await printJsonPayload(
+      {
+        ...basePayload,
+        status: "app_cdp_usage_unavailable",
+        supervisor_state: "app_cdp_usage_unavailable",
+        exit_code: 1,
+        app_cdp: {
+          ...basePayload.app_cdp,
+          submit_allowed: true,
+          submit_blocked_reason: "db_delta_before_unavailable",
+        },
+      },
+      args.out,
+    );
+    return;
+  }
+
+  let snapshotPath = null;
+  await writeRunPacketProgress(args, {
+    ...basePayload,
+    status: "app_cdp_running",
+    supervisor_state: "app_cdp_running",
+    app_cdp: { ...basePayload.app_cdp, submit_allowed: true },
+  });
+  try {
+    snapshotPath = await createRunPacketSnapshot(workspace);
+    const submitResult = await setComposerValue(args.port, packet.prompt);
+    if (!submitResult.value?.ok) {
+      throw new Error(`set-composer failed: ${submitResult.value?.reason ?? "unknown"}`);
+    }
+    const sendResult = await clickMatchingTextValue(args.port, "Send", false);
+    if (!sendResult.value?.ok) {
+      throw new Error(`submit click failed: ${sendResult.value?.reason ?? "unknown"}`);
+    }
+    const waitResult = await waitIdleValue(args.port, args.timeoutMs ?? 300_000, args.intervalMs ?? 2_000);
+    const audit = await auditRunPacketAttempt({
+      workspace,
+      packetPath,
+      snapshotPath,
+      validationTimeout: args.validationTimeout,
+    });
+    const dbDeltaAfter = await captureAppRunPacketDbDeltaAfter(args, packetPath);
+    const finalBasePayload = appRunPacketBasePayload({
+      packetPath,
+      packet,
+      workspace,
+      expectedWorkspace,
+      workspaceBinding,
+      args,
+      status: basePayload.status,
+      before: dbDeltaBefore.before,
+      after: dbDeltaAfter.after,
+    });
+    await printJsonPayload(
+      appRunPacketPayloadFromAudit({ basePayload: finalBasePayload, audit, waitResult, submitResult, sendResult }),
+      args.out,
+    );
+  } catch (error) {
+    await printJsonPayload(
+      {
+        ...basePayload,
+        status: "app_cdp_error",
+        supervisor_state: "app_cdp_error",
+        error: error.message,
+        app_cdp: {
+          ...basePayload.app_cdp,
+          submit_allowed: true,
+          error: error.message,
+        },
+      },
+      args.out,
+    );
+  } finally {
+    if (snapshotPath) await unlink(snapshotPath).catch(() => {});
+  }
 }
 
 async function runPacket(args) {
@@ -1580,32 +2841,102 @@ async function runPacket(args) {
     return;
   }
   await ensureCliPromptReady(args);
-  const cliArgs = buildPromptArgs(
-    {
-      ...args,
-      mode: args.mode ?? packet.mode,
-      text: packet.prompt,
-      textFile: undefined,
-      attach: [...(args.attach ?? []), ...vision.attached_files],
-    },
-    packet.prompt,
-    workspace,
-  );
   const maxAttempts = positiveIntOrDefault(args.maxAttempts, DEFAULT_PROVIDER_MAX_ATTEMPTS);
   const retryDelayMs = nonNegativeIntOrDefault(args.retryDelayMs, DEFAULT_PROVIDER_RETRY_DELAY_MS);
+  const providerRateLimitFailFastCount = args.providerRateLimitFailFast === false
+    ? 0
+    : positiveIntOrDefault(args.providerRateLimitFailFastCount, DEFAULT_PROVIDER_RATE_LIMIT_FAIL_FAST_COUNT);
   const snapshotPath = await createRunPacketSnapshot(workspace);
   const usageBefore = await captureUsageSnapshot(args, "before");
+  const dbDeltaBefore = args.modelUsageDb
+    ? await captureAppRunPacketDbDeltaBefore(args, packetPath)
+    : null;
   const attempts = [];
   const retryDelaysMs = [];
   let finalResult = null;
+  let promptText = packet.prompt;
+  let currentAttempt = null;
+  let terminalWritten = false;
+  const writeTerminal = async (status, options = {}) => {
+    if (terminalWritten) return;
+    terminalWritten = true;
+    await writeRunPacketProgress(args, runPacketTerminalPayload({
+      status,
+      packetPath,
+      workspace,
+      attempts,
+      maxAttempts,
+      currentAttempt,
+      ...options,
+    }));
+    await unlink(snapshotPath).catch(() => {});
+  };
+  const removeSignalHandlers = installRunPacketSignalHandlers(writeTerminal);
 
   try {
+    await writeRunPacketProgress(args, {
+      ok: false,
+      exit_code: 1,
+      status: "running",
+      supervisor_state: "running",
+      packet: packetPath,
+      workspace,
+      attempts: 0,
+      attempt_count: 0,
+      max_attempts: maxAttempts,
+      validation_ok: null,
+    });
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      currentAttempt = attempt;
+      await writeRunPacketProgress(args, {
+        ok: false,
+        exit_code: 1,
+        status: "running",
+        supervisor_state: "running",
+        packet: packetPath,
+        workspace,
+        attempts: attempts.length,
+        attempt_count: attempts.length,
+        current_attempt: attempt,
+        max_attempts: maxAttempts,
+        validation_ok: null,
+        attempt_results: attempts.map(compactAttemptRecord),
+      });
+      const cliArgs = buildPromptArgs(
+        {
+          ...args,
+          mode: args.mode ?? packet.mode,
+          text: promptText,
+          textFile: undefined,
+          attach: [...(args.attach ?? []), ...vision.attached_files],
+        },
+        promptText,
+        workspace,
+      );
       const result = await runZcodeCli(cliArgs, {
         cwd: workspace,
         timeoutMs: args.timeoutMs ?? PROMPT_TIMEOUT_MS,
         env: visionRunEnv.env,
+        acceptValidatedArtifactAfterMs: args.acceptValidatedArtifactAfterMs ?? 0,
+        providerRateLimitFailFastCount,
+        auditValidatedArtifact: () => auditRunPacketAttempt({
+          workspace,
+          packetPath,
+          snapshotPath,
+          validationTimeout: args.validationTimeout,
+        }),
       });
+      const attemptUsage = normalizedZcodeUsageFromStdout(result.stdout ?? "");
+      const providerUsageLedger = await appendProviderUsageLedger(attemptUsage, {
+        packet,
+        packetPath,
+        attempt,
+      }).catch((error) => ({
+        appended: false,
+        status: "write_failed",
+        path: providerUsageLedgerTarget(process.env, packetPath).path,
+        error: error.message,
+      }));
       const audit = await auditRunPacketAttempt({
         workspace,
         packetPath,
@@ -1613,8 +2944,28 @@ async function runPacket(args) {
         validationTimeout: args.validationTimeout,
       });
       const state = classifyProviderRunState({ cliOk: result.cli_ok, provider: result, audit });
-      const attemptResult = { ...result, audit, ...state };
+      const attemptResult = { ...result, provider_usage_ledger: providerUsageLedger, audit, ...state };
       attempts.push(attemptResult);
+      if (state.supervisor_state === "run_timeout") {
+        finalResult = attemptResult;
+        break;
+      }
+      await writeRunPacketProgress(args, {
+        ok: false,
+        exit_code: 1,
+        status: state.supervisor_state,
+        supervisor_state: state.supervisor_state,
+        packet: packetPath,
+        workspace,
+        attempts: attempts.length,
+        attempt_count: attempts.length,
+        current_attempt: attempt,
+        max_attempts: maxAttempts,
+        validation_ok: audit?.validation?.ok ?? null,
+        audit_ok: audit?.ok ?? null,
+        changed_count: audit?.changed_count ?? null,
+        attempt_results: attempts.map(compactAttemptRecord),
+      });
       const shouldRetry = (
         state.supervisor_state === "retryable_provider_error" &&
         attempt < maxAttempts
@@ -1624,14 +2975,34 @@ async function runPacket(args) {
         if (retryDelayMs > 0) await sleep(retryDelayMs);
         continue;
       }
+      const shouldRepairValidation = (
+        args.repairValidation !== false &&
+        ["audit_failed", "unsafe_partial"].includes(state.supervisor_state) &&
+        isRepairableValidationFailure(audit) &&
+        attempt < maxAttempts
+      );
+      if (shouldRepairValidation) {
+        retryDelaysMs.push(0);
+        promptText = validationRepairPrompt(packet, audit, attempt + 1);
+        continue;
+      }
       finalResult = attemptResult;
       break;
     }
 
     const usageAfter = await captureUsageSnapshot(args, "after");
+    const dbDeltaAfter = dbDeltaBefore
+      ? await captureAppRunPacketDbDeltaAfter(args, packetPath)
+      : null;
     const runUsage = normalizedZcodeUsageFromStdout(finalResult.stdout ?? "");
-    const usageAccounting = buildUsageAccounting(finalResult, usageBefore, usageAfter);
+    const outputPath = args.out ? resolve(args.out) : join(dirname(resolve(packetPath)), "zcode-run.json");
+    const usageAccounting = buildUsageAccounting(finalResult, usageBefore, usageAfter, {
+      outputPath,
+      dbDeltaBefore: dbDeltaBefore?.before ?? null,
+      dbDeltaAfter: dbDeltaAfter?.after ?? null,
+    });
     const finalOk = ["success", "partial_success"].includes(finalResult.supervisor_state);
+    terminalWritten = true;
     await printCliResult(
       {
         ...finalResult,
@@ -1639,6 +3010,7 @@ async function runPacket(args) {
         packet: packetPath,
         workspace,
         mode: mapMode(args.mode ?? packet.mode),
+        worker_finalization: packet.worker_finalization ?? "zcode_owned",
         prompt_chars: packet.prompt.length,
         vision,
         vision_preflight: visionPreflight,
@@ -1650,9 +3022,21 @@ async function runPacket(args) {
         retry_delays_ms: retryDelaysMs,
         max_attempts: maxAttempts,
         safe_to_retry_later: finalResult.safe_to_retry_later && attempts.length >= maxAttempts,
+        timed_out: Boolean(finalResult.timed_out),
+        timeout_ms: finalResult.timeout_ms ?? null,
+        accepted_validated_artifact: Boolean(finalResult.accepted_validated_artifact),
         attempt_results: attempts.map(compactAttemptRecord),
+        provider_usage_ledger_records_appended: attempts.filter((attempt) => attempt.provider_usage_ledger?.appended).length,
         usage_available: usageAccounting.usage_available,
         no_usage_reason: usageAccounting.no_usage_reason,
+        worker_usage_status: usageAccounting.worker_usage_status,
+        worker_usage_unit: usageAccounting.worker_usage_unit,
+        worker_total_tokens: usageAccounting.worker_total_tokens,
+        worker_usage_source_path: usageAccounting.worker_usage_source_path,
+        worker_usage_capture_method: usageAccounting.worker_usage_capture_method,
+        row_ids: usageAccounting.row_ids,
+        row_count: usageAccounting.row_count,
+        rows: usageAccounting.rows,
         response: runUsage.response,
         audit: finalResult.audit,
         validation: finalResult.audit?.validation ?? null,
@@ -1671,6 +3055,7 @@ async function runPacket(args) {
       args.out,
     );
   } finally {
+    removeSignalHandlers();
     await unlink(snapshotPath).catch(() => {});
   }
 }
@@ -1706,7 +3091,7 @@ async function probeCdp(port) {
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const version = await getJson(port, "/json/version");
+      const version = await getJson(port, "/json/version", { duringLaunch: true });
       return { ok: true, browser: version.Browser ?? null };
     } catch (error) {
       lastError = error;
@@ -1716,8 +3101,12 @@ async function probeCdp(port) {
   return { ok: false, error: lastError?.message ?? "unknown CDP error" };
 }
 
-function getJson(port, path) {
+function getJson(port, path, options = {}) {
   return new Promise((resolveJson, rejectJson) => {
+    const unavailableMessage = (detail) =>
+      options.duringLaunch
+        ? `ZCode launched, but CDP did not become reachable on port ${port}. Confirm Electron remote debugging is enabled for ZCode, or retry with a different --port. ${detail}`
+        : `ZCode CDP is not reachable on port ${port}. Run \`zcodectl launch --port ${port}\` first, then retry this command. ${detail}`;
     const request = http.get(
       {
         host: "127.0.0.1",
@@ -1745,9 +3134,15 @@ function getJson(port, path) {
       },
     );
     request.on("timeout", () => {
-      request.destroy(new Error(`CDP HTTP timeout on port ${port}`));
+      request.destroy(new Error(unavailableMessage("Connection timed out.")));
     });
-    request.on("error", rejectJson);
+    request.on("error", (error) => {
+      if (["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENOTFOUND"].includes(error.code)) {
+        rejectJson(new Error(unavailableMessage(error.message)));
+        return;
+      }
+      rejectJson(error);
+    });
   });
 }
 
@@ -1936,7 +3331,7 @@ async function setMode(port, mode) {
   await evaluate(port, expression);
 }
 
-async function setComposer(port, promptText) {
+async function setComposerValue(port, promptText) {
   if (!promptText) throw new Error("--text is required");
   const expression = `(() => {
     const text = ${JSON.stringify(promptText)};
@@ -1957,7 +3352,12 @@ async function setComposer(port, promptText) {
       text: (el.innerText || el.value || el.textContent || '').slice(0, 500),
     };
   })()`;
-  await evaluate(port, expression);
+  return runtimeEvaluate(port, expression);
+}
+
+async function setComposer(port, promptText) {
+  const result = await setComposerValue(port, promptText);
+  console.log(JSON.stringify(result, null, 2));
 }
 
 async function submitTask(port, promptText) {
@@ -1973,7 +3373,7 @@ async function submitGoal(port, promptText) {
   await submitTask(port, text);
 }
 
-async function waitIdle(port, timeoutMs = 300_000, intervalMs = 2_000) {
+async function waitIdleValue(port, timeoutMs = 300_000, intervalMs = 2_000) {
   const deadline = Date.now() + timeoutMs;
   let lastSummary = null;
   while (Date.now() <= deadline) {
@@ -1993,16 +3393,19 @@ async function waitIdle(port, timeoutMs = 300_000, intervalMs = 2_000) {
     })()`);
     lastSummary = result.value;
     if (lastSummary?.awaitingApproval) {
-      console.log(JSON.stringify({ ok: false, reason: "awaiting_approval", summary: lastSummary }, null, 2));
-      return;
+      return { ok: false, reason: "awaiting_approval", summary: lastSummary };
     }
     if (lastSummary && !lastSummary.running && lastSummary.workedFor) {
-      console.log(JSON.stringify({ ok: true, summary: lastSummary }, null, 2));
-      return;
+      return { ok: true, summary: lastSummary };
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
   }
-  console.log(JSON.stringify({ ok: false, reason: "timeout", summary: lastSummary }, null, 2));
+  return { ok: false, reason: "timeout", summary: lastSummary };
+}
+
+async function waitIdle(port, timeoutMs = 300_000, intervalMs = 2_000) {
+  const result = await waitIdleValue(port, timeoutMs, intervalMs);
+  console.log(JSON.stringify(result, null, 2));
 }
 
 async function clickByText(port, label) {
@@ -2015,7 +3418,7 @@ async function clickByContainedText(port, needle) {
   await clickMatchingText(port, needle, true);
 }
 
-async function clickMatchingText(port, label, contains) {
+async function clickMatchingTextValue(port, label, contains) {
   const expression = `(() => {
     const label = ${JSON.stringify(label)};
     const contains = ${JSON.stringify(contains)};
@@ -2036,7 +3439,12 @@ async function clickMatchingText(port, label, contains) {
     }
     return { ok: true, label, contains, x, y };
   })()`;
-  await evaluate(port, expression);
+  return runtimeEvaluate(port, expression);
+}
+
+async function clickMatchingText(port, label, contains) {
+  const result = await clickMatchingTextValue(port, label, contains);
+  console.log(JSON.stringify(result, null, 2));
 }
 
 async function screenshot(port, out) {
@@ -2068,6 +3476,7 @@ async function main() {
   else if (args.command === "vision-preflight") await visionPreflightCommand(args);
   else if (args.command === "cli-prompt") await cliPrompt(args);
   else if (args.command === "run-packet") await runPacket(args);
+  else if (args.command === "app-run-packet") await appRunPacket(args);
   else if (args.command === "launch") await launch(args.port, { newInstance: args.newInstance });
   else if (args.command === "targets") await printTargets(args.port);
   else if (args.command === "text") await text(args.port, args.max ?? 4000);

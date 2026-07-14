@@ -20,6 +20,11 @@ REQUIRED_FILES = {
     "tools/zcode_supervisor/auto_route.py",
     "tools/zcode_eval/zcode_eval.py",
     "tools/zcode_eval/zcode_release.py",
+    "tools/zcode_eval/rubrics/billing_cent_rounding.v1.json",
+    "tools/zcode_eval/rubrics/ledger_summary_state_aggregation.v1.json",
+    "tools/zcode_eval/rubrics/policy_exact_label_routing.v1.json",
+    "tools/zcode_eval/rubrics/single_file_fixture_contract.v1.json",
+    "tools/zcode_eval/rubrics/vision_card_layout_match.v1.json",
 }
 
 REQUIRED_ENTRY_POINTS = {

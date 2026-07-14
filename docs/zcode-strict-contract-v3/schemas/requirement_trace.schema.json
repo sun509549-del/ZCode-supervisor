@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/requirement_trace.v1.schema.json",
+  "title": "requirement_trace.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^REQ-[0-9]{3,}$"
+    },
+    "status": {
+      "enum": [
+        "satisfied",
+        "not_satisfied",
+        "blocked",
+        "not_applicable",
+        "unknown"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "enum": [
+              "changed_file",
+              "validation_result",
+              "diffstat",
+              "code_reference",
+              "test_output",
+              "manifest",
+              "note"
+            ]
+          },
+          "ref": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "ref",
+          "summary"
+        ]
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "status",
+    "evidence"
+  ]
+}

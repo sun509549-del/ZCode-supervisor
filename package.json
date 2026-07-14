@@ -1,6 +1,6 @@
 {
   "name": "zcode-supervisor",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Codex-side supervisor tooling for safely delegating bounded coding tasks to ZCode.",
   "type": "module",
   "private": false,

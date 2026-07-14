@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/codex_context_intake.v1.schema.json",
+  "title": "codex_context_intake.v1",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "const": "codex_context_intake.v1" },
+    "experiment_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "canonical_mode": {
+      "enum": ["codex_only", "zcode_nested_codex", "zcode_direct_launcher", "zcode_direct_harness"]
+    },
+    "display_mode": { "type": "string" },
+    "human_display_mode": { "type": "string" },
+    "mode_detail": { "type": "string" },
+    "mode_aliases": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "phase": {
+      "enum": ["plan", "implementation", "acceptance", "validation", "validation_audit", "report", "contract_generation", "zcode_launch", "zcode_self_audit_parse", "deterministic_acceptance", "codex_acceptance_audit", "shadow_codex_audit", "summary_render", "noop_baseline", "unknown"]
+    },
+    "attempt_index": { "type": "integer", "minimum": 1 },
+    "run_id": { "type": "string" },
+    "prompt": {
+      "type": "object",
+      "required": ["prompt_bytes", "raw_prompt_stored"],
+      "properties": {
+        "prompt_sha256": { "type": ["string", "null"] },
+        "prompt_bytes": { "type": "integer", "minimum": 0 },
+        "raw_prompt_stored": { "const": false }
+      }
+    },
+    "stdin": {
+      "type": "object",
+      "required": ["stdin_bytes", "sections"],
+      "properties": {
+        "stdin_sha256": { "type": ["string", "null"] },
+        "stdin_bytes": { "type": "integer", "minimum": 0 },
+        "sections": { "type": "array" }
+      }
+    },
+    "argv": {
+      "type": "object",
+      "required": ["image_arg_style", "prompt_source", "harness_arg_order_validated"],
+      "properties": {
+        "image_arg_style": { "enum": ["none", "repeated_flags", "comma_list", "mixed", "unknown"] },
+        "prompt_source": { "enum": ["argument", "stdin", "file", "unknown"] },
+        "harness_arg_order_validated": { "type": "boolean" }
+      }
+    },
+    "tool_context_intake": {
+      "type": "object",
+      "required": [
+        "command_count",
+        "command_stdout_bytes_total",
+        "command_stderr_bytes_total",
+        "large_command_output_count",
+        "largest_command_output_bytes",
+        "green_path_forbidden_command_count",
+        "green_path_forbidden_commands"
+      ]
+    },
+    "safety": {
+      "type": "object",
+      "properties": {
+        "raw_jsonl_sensitivity": { "enum": ["sensitive", "unknown"] },
+        "raw_jsonl_file_mode": { "type": "string" },
+        "raw_jsonl_gitignored": { "type": "boolean" },
+        "raw_jsonl_secret_scan_result": { "enum": ["pass", "fail", "skipped", "unknown"] }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "task_id",
+    "canonical_mode",
+    "phase",
+    "attempt_index",
+    "run_id",
+    "prompt",
+    "stdin",
+    "argv",
+    "tool_context_intake"
+  ]
+}

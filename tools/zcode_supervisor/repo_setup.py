@@ -59,6 +59,12 @@ def routing_payload(
             "codex_direct_edit_allowed": ["read_only", "trivial", "zcode_unavailable_recovery"],
             "ask_user_before": ["destructive", "migration", "credentials", "production_risk"],
             "skip_triggers": ["no-zcode"],
+            "acceptance_gates": [
+                "run_json_present",
+                "scope_audit_pass",
+                "validation_pass",
+                "codex_autoreview_clean",
+            ],
         },
         "defaults": {
             "mode": "Auto Edit",
@@ -66,10 +72,17 @@ def routing_payload(
             "task_class": "root-cause",
             "risk_budget": "low",
             "workspace_kind": "regular",
-            "usage_snapshot_source": "auto",
-            "max_attempts": 2,
+            "usage_snapshot_source": "none",
+            "max_attempts": 1,
+            "repair_validation": False,
+            "result_verbosity": "compact",
             "retry_delay_ms": 60000,
+            "prompt_timeout_ms": 600000,
+            "validation_timeout_seconds": 60,
+            "usage_snapshot_timeout_ms": 20000,
+            "require_changed_files": True,
             "max_auto_retries": 2,
+            "codex_review_mode": "thin_launcher_then_autoreview",
         },
         "paths": {
             "zcode_supervisor": str(supervisor),
@@ -119,6 +132,19 @@ orchestration, audit, and final acceptance while ZCode handles implementation.
   high-risk plan-only, or the user says `no-zcode`.
 - Do not delegate secrets, destructive Git operations, dependency installs, or final
   acceptance to ZCode.
+- Token-efficient default: Codex should act as a thin launcher/auditor. Do not
+  re-implement or broadly re-read the project after ZCode returns; first trust
+  the run JSON, scope audit, changed-file cap, and validation result as the
+  acceptance evidence.
+- Thin mode runs one bounded ZCode attempt, skips quota snapshots, disables
+  automatic validation-repair retries, and returns compact JSON by default.
+  Opt into heavier retries or usage accounting only for explicit benchmark or
+  recovery runs.
+- After committing non-trivial delegated work locally and before push, run
+  `codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+  as the final closeout gate. Replace `origin/main` with the real PR base. Fix accepted findings
+  through the smallest safe loop, preferably by sending a narrower ZCode packet
+  unless the fix belongs to the supervisor itself.
 
 ## Normal Flow
 
@@ -143,8 +169,12 @@ python3 {supervisor} auto-route \\
 ```
 
 The command creates the packet, calls `zcodectl run-packet`, and returns a
-machine-readable result. If it returns `needs_codex_planning`, Codex should add
-a tighter allowed-file set and validation command, not ask the user.
+machine-readable result. `auto-route --execute` reads the result from the
+`--out` run JSON file, enforces a bounded ZCode CLI timeout, and treats a
+successful implementation packet with no changed files as a failure unless
+Codex explicitly passes `--allow-no-change`. If it returns
+`needs_codex_planning`, Codex should add a tighter allowed-file set and
+validation command, not ask the user.
 
 ## Manual Packet Flow
 
@@ -172,14 +202,26 @@ Use `zcodectl run-packet` through this repository's controller:
 node {controller} run-packet \\
   --packet .codex/zcode/packets/<task>.json \\
   --mode edit \\
-  --max-attempts 2 \\
+  --max-attempts 1 \\
   --retry-delay-ms 60000 \\
-  --usage-snapshot-source auto \\
+  --timeout-ms 600000 \\
+  --usage-snapshot-source none \\
+  --no-repair-validation \\
   --out .codex/zcode/runs/<task>.zcode.json
 ```
 
-4. Codex reviews the `supervisor_state`, changed files, validation result, and
-   risk notes before accepting the work.
+4. Codex reviews the run JSON file, `supervisor_state`, changed files,
+   validation result, and risk notes before accepting the work. If the run file
+   is missing, ZCode timed out, or `zcode_did_work` is false for an
+   implementation task, record it as a failed delegation instead of silently
+   switching to direct editing.
+
+5. Codex creates the scoped local commit, then runs
+   `codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+   before push for non-trivial delegated changes, using the real PR base when it
+   differs from `origin/main`. A clean autoreview result is the final
+   Codex-side quality gate; accepted findings must be verified against the real
+   diff before repair.
 
 ## Vision MCP
 
@@ -210,6 +252,15 @@ and final-accepts; ZCode performs only bounded implementation through
 `zcodectl run-packet`.
 Before direct implementation edits, Codex should run:
 `python3 <zcode-supervisor>/tools/zcode_supervisor/zcode_supervisor.py auto-route --workspace . --objective "<task>"`.
+If ZCode produces no run JSON or no changed files for an implementation task,
+record a failed delegation and retry with a smaller allowed-file packet before
+doing direct recovery.
+Keep Codex token use low: act as a thin launcher/auditor, create the scoped local
+commit, then run
+`codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+with the real PR base as the final closeout gate before push.
+Default auto-route output is compact; inspect the full run JSON only when a
+gate fails and you need exact failure evidence.
 Do not delegate secrets, destructive operations, or final acceptance to ZCode.
 {AGENTS_END}
 """

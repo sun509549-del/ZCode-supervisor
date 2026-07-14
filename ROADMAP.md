@@ -2,6 +2,10 @@
 
 ## v0.0.2
 
+Status: implemented in this branch. The release focus is now the
+token-efficient thin launcher/auditor flow with final Codex autoreview and
+repeatable comparison reporting.
+
 Focus: prove the ZCode worker model on harder real-app tasks without increasing
 human supervision.
 

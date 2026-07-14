@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/token_metric.v1.schema.json",
+  "title": "token_metric.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "token_metric.v1"
+    },
+    "primary_metric": {
+      "const": "effective_codex_work"
+    },
+    "primary_metric_formula": {
+      "const": "uncached_input_tokens + output_tokens + reasoning_output_tokens"
+    },
+    "metric_formula_version": {
+      "const": "codex_usage_metrics.v1"
+    },
+    "secondary_metrics": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "raw_input",
+          "cached_input",
+          "uncached_input",
+          "output",
+          "reasoning",
+          "uncached_plus_reasoning"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "primary_metric",
+    "primary_metric_formula",
+    "metric_formula_version",
+    "secondary_metrics"
+  ]
+}

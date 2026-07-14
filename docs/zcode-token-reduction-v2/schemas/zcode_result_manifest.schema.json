@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/zcode_result_manifest.v1.schema.json",
+  "title": "zcode_result_manifest.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "zcode_result_manifest.v1"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "allowed_files_only": {
+      "type": "boolean"
+    },
+    "diffstat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "insertions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deletions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_changed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "insertions",
+        "deletions",
+        "files_changed"
+      ]
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command_hash": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "result": {
+          "enum": [
+            "pass",
+            "fail",
+            "skipped",
+            "unknown"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "captured_bytes_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_visible_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "exit_code",
+        "result",
+        "summary"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "patch_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope_safety": {
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        },
+        "artifact_quality": {
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        },
+        "codex_repair_size": {
+          "enum": [
+            "none",
+            "small_polish",
+            "substantial_repair",
+            "rewrite",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "risk_flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "untrusted_data_notice": {
+      "const": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "changed_files",
+    "allowed_files_only",
+    "diffstat",
+    "validation",
+    "artifact",
+    "risk_flags",
+    "untrusted_data_notice"
+  ]
+}

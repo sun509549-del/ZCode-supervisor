@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/codex_acceptance.v1.schema.json",
+  "title": "codex_acceptance.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "codex_acceptance.v1"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "acceptance_mode": {
+      "enum": [
+        "codex_manifest_only",
+        "non_llm_green_path",
+        "codex_anomaly_audit",
+        "shadow_codex_audit"
+      ]
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "risk_flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "repair_size": {
+      "enum": [
+        "none",
+        "small_polish",
+        "substantial_repair",
+        "rewrite",
+        "unknown"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "green_path_acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "deterministic_accept": {
+          "type": "boolean"
+        },
+        "codex_acceptance_skipped": {
+          "type": "boolean"
+        },
+        "shadow_codex_audit_enabled": {
+          "type": "boolean"
+        },
+        "shadow_codex_audit_result": {
+          "enum": [
+            "agree",
+            "disagree",
+            "unavailable"
+          ]
+        },
+        "missed_risk_flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "deterministic_accept",
+        "codex_acceptance_skipped",
+        "shadow_codex_audit_enabled",
+        "shadow_codex_audit_result",
+        "missed_risk_flags"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "accepted",
+    "acceptance_mode",
+    "risk_flags",
+    "repair_size",
+    "violations",
+    "green_path_acceptance"
+  ]
+}

@@ -15,6 +15,21 @@ const overloadStderr = `ProviderBusinessError: [1305][The service may be tempora
   providerKind: 'anthropic',
   providerMessage: '[1305][The service may be temporarily overloaded, please try again later][req-1]'`;
 
+const rateLimit1302Stderr = `ProviderBusinessError: [1302][Rate limit reached for requests][req-1]
+  code: 'PROVIDER_BUSINESS_ERROR',
+  isProviderBusinessError: true,
+  providerCode: '1302',
+  providerId: 'zai',
+  providerKind: 'anthropic',
+  providerMessage: '[1302][Rate limit reached for requests][req-1]'
+ProviderBusinessError: [1302][Rate limit reached for requests][req-2]
+  code: 'PROVIDER_BUSINESS_ERROR',
+  isProviderBusinessError: true,
+  providerCode: '1302',
+  providerId: 'zai',
+  providerKind: 'anthropic',
+  providerMessage: '[1302][Rate limit reached for requests][req-2]'`;
+
 test("classifies ZCode provider overload stderr", () => {
   const provider = classifyProviderError({ stderr: overloadStderr, exitCode: 143 });
 
@@ -22,6 +37,9 @@ test("classifies ZCode provider overload stderr", () => {
   assert.equal(provider.provider_code, "1305");
   assert.equal(provider.provider_id, "zai");
   assert.equal(provider.provider_kind, "anthropic");
+  assert.equal(provider.provider_error_kind, "provider_overload");
+  assert.equal(provider.blocker_kind, "infrastructure_blocker");
+  assert.equal(provider.infrastructure_blocker, true);
   assert.equal(provider.provider_error_temporary, true);
   assert.equal(provider.retryable_provider_error, true);
 });
@@ -31,6 +49,20 @@ test("exit code 143 is classified for supervisor handling", () => {
 
   assert.equal(provider.provider_error, true);
   assert.equal(provider.provider_code, null);
+  assert.equal(provider.retryable_provider_error, true);
+});
+
+test("classifies repeated ZCode provider 1302 rate limit distinctly", () => {
+  const provider = classifyProviderError({ stderr: rateLimit1302Stderr, exitCode: 143 });
+
+  assert.equal(provider.provider_error, true);
+  assert.equal(provider.provider_code, "1302");
+  assert.equal(provider.provider_error_kind, "provider_rate_limit_1302");
+  assert.equal(provider.blocker_kind, "infrastructure_blocker");
+  assert.equal(provider.infrastructure_blocker, true);
+  assert.equal(provider.provider_rate_limit_1302, true);
+  assert.equal(provider.provider_rate_limit_1302_count, 2);
+  assert.equal(provider.provider_error_temporary, true);
   assert.equal(provider.retryable_provider_error, true);
 });
 
@@ -68,5 +100,13 @@ test("successful CLI result is blocked when supervisor audit fails", () => {
 
 test("detects usage JSON only when token usage is present", () => {
   assert.equal(usageAvailableFromStdout('{"usage":{"input_tokens":10,"output_tokens":2}}\n'), true);
+  assert.equal(usageAvailableFromStdout('progress\n{"usage_accounting":{"tokens_used":12}}\n'), true);
+  assert.equal(usageAvailableFromStdout('{"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}\n'), true);
+  assert.equal(
+    usageAvailableFromStdout(
+      '{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}\n',
+    ),
+    true,
+  );
   assert.equal(usageAvailableFromStdout("plain final answer\n"), false);
 });

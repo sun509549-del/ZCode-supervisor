@@ -14,7 +14,7 @@ from typing import Any
 
 DEFAULT_OWNER_REPO = "AkiGarage/ZCode-supervisor"
 DEFAULT_PACKAGE = "zcode-supervisor"
-DEFAULT_TAG = "v0.0.1"
+DEFAULT_TAG = "v0.0.2"
 DEFAULT_SOURCE_DIGEST = "6525b8a41371a687a9b9ef3513da38eaab52cf9e"
 DEFAULT_WORKFLOW = "pypi-publish.yml"
 RELEASE_WORKFLOW = "release-artifacts.yml"

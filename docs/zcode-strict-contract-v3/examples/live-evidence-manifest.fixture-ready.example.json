@@ -1,0 +1,66 @@
+{
+  "schema_version": "strict_contract_live_evidence_manifest.v1",
+  "benchmark_run_id": "goal-h-fixture-ready-template",
+  "benchmark_run_kind": "fixture_ready_plan",
+  "task_count": 20,
+  "task_slugs": [
+    "policy-reason-contract",
+    "billing-credit-contract",
+    "ledger-summary-contract",
+    "vision-card-latest",
+    "path-normalization-contract",
+    "json-schema-contract",
+    "markdown-table-contract",
+    "small-code-edit-contract",
+    "test-repair-contract",
+    "data-extraction-contract",
+    "cli-argument-contract",
+    "refusal-safety-contract",
+    "missing-input-contract",
+    "deterministic-failure-contract",
+    "artifact-acceptance-contract",
+    "currency-format-contract",
+    "yaml-frontmatter-contract",
+    "dedupe-records-contract",
+    "timezone-window-contract",
+    "error-message-contract"
+  ],
+  "provider_models": [
+    {
+      "provider": "UNCONFIRMED",
+      "model": "UNCONFIRMED",
+      "status": "not_run"
+    }
+  ],
+  "operator": "UNCONFIRMED",
+  "created_at": "2026-06-25T00:00:00Z",
+  "approval_status": "pending",
+  "claim_family": "direct_orchestrated_delegation_savings",
+  "strict_result_status": "unavailable",
+  "quality_result_status": "unavailable",
+  "worker_usage": {
+    "status": "unavailable",
+    "unit": null,
+    "source_path": null,
+    "source_type": "not_run",
+    "no_usage_reason": "live_benchmark_not_run"
+  },
+  "codex_usage": {
+    "status": "unavailable",
+    "unit": null,
+    "source_path": null,
+    "source_type": "not_run",
+    "no_usage_reason": "live_benchmark_not_run"
+  },
+  "total_workflow_savings": {
+    "status": "blocked",
+    "unit": null,
+    "claim_scope": "direct_orchestrated_delegation_savings",
+    "no_claim_reason": "live_benchmark_not_run"
+  },
+  "artifact_paths": [],
+  "production_green_path_enabled": false,
+  "direct_mode_default": false,
+  "provider_auth_status": "not_run",
+  "partial_run": false
+}

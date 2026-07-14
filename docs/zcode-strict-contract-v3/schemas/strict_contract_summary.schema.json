@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/strict_contract_summary.v1.schema.json",
+  "title": "strict_contract_summary.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "strict_contract_summary.v1"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "primary_metric": {
+      "const": "effective_codex_work"
+    },
+    "primary_metric_formula": {
+      "const": "uncached_input_tokens + output_tokens + reasoning_output_tokens"
+    },
+    "task_totals": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "clean_benchmark_vs_operator_total": {
+      "type": "object"
+    },
+    "contract_generation_tokens": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "contract_visible_bytes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "zcode_self_audit_coverage": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "deterministic_acceptance_result": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "codex_acceptance_shadow_audit": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "contract_roi": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "trace_coverage": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "quality_gates": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "repair_burden": {
+      "type": "object"
+    },
+    "wall_clock_breakdown": {
+      "type": "object"
+    },
+    "phase_split_measurement": {
+      "type": "object"
+    },
+    "contract_records": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "next_optimization_target": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "primary_metric",
+    "primary_metric_formula",
+    "task_totals",
+    "next_optimization_target"
+  ]
+}

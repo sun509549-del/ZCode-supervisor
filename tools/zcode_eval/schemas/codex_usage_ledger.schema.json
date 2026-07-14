@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/codex_usage_ledger.schema.json",
+  "title": "Codex usage ledger record",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "collector_version",
+    "recorded_at",
+    "experiment_id",
+    "task_id",
+    "mode",
+    "run_kind",
+    "phase",
+    "attempt_index",
+    "run_id",
+    "base_commit",
+    "worktree_mode",
+    "usage",
+    "events",
+    "io_visibility",
+    "quality",
+    "safety",
+    "artifacts",
+    "user_impact",
+    "failure"
+  ],
+  "properties": {
+    "schema_version": { "const": "codex_usage_ledger.v1" },
+    "collector_version": { "type": "string" },
+    "recorded_at": { "type": "string", "format": "date-time" },
+    "experiment_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "mode": {
+      "enum": ["codex_only", "zcode_nested_codex", "zcode_direct_launcher", "zcode_direct_harness"]
+    },
+    "run_kind": {
+      "enum": ["measurement", "production", "noop_baseline"]
+    },
+    "phase": {
+      "enum": ["plan", "implementation", "acceptance", "validation", "validation_audit", "report", "contract_generation", "zcode_launch", "zcode_self_audit_parse", "deterministic_acceptance", "codex_acceptance_audit", "shadow_codex_audit", "summary_render", "noop_baseline"]
+    },
+    "attempt_index": { "type": "integer", "minimum": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "parent_run_id": { "type": ["string", "null"] },
+    "base_commit": { "type": "string" },
+    "worktree_mode": {
+      "enum": ["current", "disposable", "tmp_clone", "fixture", "unknown"]
+    },
+    "codex_cli_version": { "type": ["string", "null"] },
+    "model": { "type": ["string", "null"] },
+    "reasoning_effort": { "type": ["string", "null"] },
+    "sandbox": { "type": ["string", "null"] },
+    "approval_mode": { "type": ["string", "null"] },
+    "ignore_user_config": { "type": ["boolean", "null"] },
+    "ignore_rules": { "type": ["boolean", "null"] },
+    "profile": { "type": ["string", "null"] },
+    "config_fingerprints": { "type": "object" },
+    "usage": {
+      "type": "object",
+      "required": [
+        "input_tokens",
+        "cached_input_tokens",
+        "uncached_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "uncached_plus_reasoning",
+        "effective_codex_work",
+        "usage_missing",
+        "usage_anomaly"
+      ],
+      "properties": {
+        "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "cached_input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "uncached_input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "reasoning_output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "uncached_plus_reasoning": { "type": ["integer", "null"], "minimum": 0 },
+        "effective_codex_work": { "type": ["integer", "null"], "minimum": 0 },
+        "usage_missing": { "type": "boolean" },
+        "usage_anomaly": { "type": "boolean" }
+      }
+    },
+    "events": {
+      "type": "object",
+      "required": [
+        "event_counts",
+        "malformed_jsonl_line_count",
+        "unknown_event_count",
+        "turn_failed_count",
+        "error_count"
+      ]
+    },
+    "io_visibility": {
+      "type": "object",
+      "required": [
+        "prompt_sha256",
+        "prompt_bytes",
+        "raw_jsonl_path",
+        "launcher_stdout_bytes_total",
+        "launcher_stderr_bytes_total",
+        "codex_visible_launcher_bytes",
+        "diff_bytes_total",
+        "diff_bytes_shown_to_codex",
+        "validation_stdout_bytes_total",
+        "validation_stdout_bytes_shown_to_codex"
+      ]
+    },
+    "quality": {
+      "type": "object",
+      "required": [
+        "allowed_files_only",
+        "scope_safety",
+        "validation_result",
+        "artifact_quality",
+        "codex_repair_size"
+      ]
+    },
+    "safety": {
+      "type": "object",
+      "required": [
+        "env_policy",
+        "secret_scan_result",
+        "raw_logs_gitignored",
+        "untrusted_artifact_boundary",
+        "budget_guard_hit"
+      ]
+    },
+    "artifacts": { "type": "object" },
+    "user_impact": {
+      "type": "object",
+      "required": [
+        "ask_user_count",
+        "manual_intervention_required",
+        "manual_repair_required"
+      ]
+    },
+    "failure": {
+      "type": "object",
+      "required": ["failed", "failure_reason"],
+      "properties": {
+        "failed": { "type": "boolean" },
+        "failure_reason": { "type": ["string", "null"] }
+      }
+    },
+    "pricing": { "type": ["object", "null"] }
+  }
+}
