@@ -147,6 +147,7 @@ def classify_fallback_reason(
 def strict_accepted_from_run(run_json: dict[str, Any] | None) -> bool | None:
     value = first_present(
         get(run_json, "strict_accepted"),
+        get(run_json, "audit", "strict_contract", "accepted"),
         get(run_json, "audit", "strict_accepted"),
         get(run_json, "acceptance", "strict_accepted"),
         get(run_json, "zcode_acceptance", "strict_accepted"),
@@ -157,7 +158,10 @@ def strict_accepted_from_run(run_json: dict[str, Any] | None) -> bool | None:
 def strict_failed(run_json: dict[str, Any] | None) -> bool:
     if strict_accepted_from_run(run_json) is False:
         return True
-    violations = get(run_json, "strict_violations")
+    violations = first_present(
+        get(run_json, "strict_violations"),
+        get(run_json, "audit", "strict_contract", "violations"),
+    )
     return isinstance(violations, list) and bool(violations)
 
 
