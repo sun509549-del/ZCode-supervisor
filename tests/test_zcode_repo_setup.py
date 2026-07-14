@@ -59,7 +59,10 @@ class ZCodeRepoSetupTests(unittest.TestCase):
             self.assertIn("auto-route", delegation_text)
             self.assertIn("zcodectl run-packet", delegation_text)
             self.assertIn("thin launcher/auditor", delegation_text)
-            self.assertIn("autoreview --mode local", delegation_text)
+            self.assertIn(
+                "codex-autoreview --mode branch --base origin/main --engine codex --no-web-search",
+                delegation_text,
+            )
             mcp = json.loads(vision_mcp.read_text(encoding="utf-8"))
             self.assertEqual(mcp["mcpServers"]["zai-mcp-server"]["command"], "npx")
             self.assertEqual(mcp["mcpServers"]["zai-mcp-server"]["args"], ["-y", "@z_ai/mcp-server"])
@@ -83,7 +86,10 @@ class ZCodeRepoSetupTests(unittest.TestCase):
             agents = (repo / "AGENTS.md").read_text(encoding="utf-8")
             self.assertIn(".codex/ZCODE_DELEGATION.md", agents)
             self.assertIn("auto-route", agents)
-            self.assertIn("autoreview --mode local", agents)
+            self.assertIn(
+                "codex-autoreview --mode branch --base origin/main --engine codex --no-web-search",
+                agents,
+            )
             self.assertEqual(agents.count(AGENTS_BEGIN), 1)
 
     def test_install_repo_merges_vision_mcp_without_replacing_existing_server(self):

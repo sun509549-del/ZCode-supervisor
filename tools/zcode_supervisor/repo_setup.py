@@ -140,8 +140,9 @@ orchestration, audit, and final acceptance while ZCode handles implementation.
   automatic validation-repair retries, and returns compact JSON by default.
   Opt into heavier retries or usage accounting only for explicit benchmark or
   recovery runs.
-- Before shipping or committing non-trivial delegated work, run Codex
-  `autoreview --mode local` as a final closeout gate. Fix accepted findings
+- After committing non-trivial delegated work locally and before push, run
+  `codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+  as the final closeout gate. Replace `origin/main` with the real PR base. Fix accepted findings
   through the smallest safe loop, preferably by sending a narrower ZCode packet
   unless the fix belongs to the supervisor itself.
 
@@ -215,8 +216,10 @@ node {controller} run-packet \\
    implementation task, record it as a failed delegation instead of silently
    switching to direct editing.
 
-5. Codex runs structured `autoreview --mode local` before ship/commit for
-   non-trivial delegated changes. A clean autoreview result is the final
+5. Codex creates the scoped local commit, then runs
+   `codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+   before push for non-trivial delegated changes, using the real PR base when it
+   differs from `origin/main`. A clean autoreview result is the final
    Codex-side quality gate; accepted findings must be verified against the real
    diff before repair.
 
@@ -252,8 +255,10 @@ Before direct implementation edits, Codex should run:
 If ZCode produces no run JSON or no changed files for an implementation task,
 record a failed delegation and retry with a smaller allowed-file packet before
 doing direct recovery.
-Keep Codex token use low: act as a thin launcher/auditor, then run
-`autoreview --mode local` as the final closeout gate before ship/commit.
+Keep Codex token use low: act as a thin launcher/auditor, create the scoped local
+commit, then run
+`codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+with the real PR base as the final closeout gate before push.
 Default auto-route output is compact; inspect the full run JSON only when a
 gate fails and you need exact failure evidence.
 Do not delegate secrets, destructive operations, or final acceptance to ZCode.
