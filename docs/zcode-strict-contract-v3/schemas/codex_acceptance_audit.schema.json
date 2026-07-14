@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/codex_acceptance_audit.v1.schema.json",
+  "title": "codex_acceptance_audit.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "codex_acceptance_audit.v1"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "contract_id": {
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "manifest_only",
+        "green_path_skip",
+        "codex_anomaly_audit",
+        "shadow_codex_audit"
+      ]
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "codex_visible_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "full_diff_read": {
+      "type": "boolean"
+    },
+    "full_log_read": {
+      "type": "boolean"
+    },
+    "requirements_checked": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "trace_matrix_checked": {
+      "type": "boolean"
+    },
+    "codex_repair_size": {
+      "enum": [
+        "none",
+        "small_polish",
+        "substantial_repair",
+        "rewrite",
+        "unknown"
+      ]
+    },
+    "risk_flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "contract_id",
+    "mode",
+    "accepted",
+    "codex_visible_bytes",
+    "full_diff_read",
+    "full_log_read",
+    "trace_matrix_checked",
+    "codex_repair_size"
+  ]
+}

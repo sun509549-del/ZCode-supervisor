@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/routing_decision.v1.schema.json",
+  "title": "routing_decision.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "routing_decision.v1"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "selected": {
+      "enum": [
+        "codex_only",
+        "zcode_nested_codex",
+        "zcode_direct_launcher",
+        "zcode_direct_harness"
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expected_codex_tokens": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "expected_wall_clock_sec": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "fallback": {
+      "enum": [
+        "codex_only",
+        "zcode_nested_codex",
+        "zcode_direct_launcher",
+        "zcode_direct_harness",
+        "none"
+      ]
+    },
+    "urgent_task_penalty": {
+      "type": "boolean"
+    },
+    "background_safe": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "selected",
+    "reason_codes",
+    "fallback",
+    "urgent_task_penalty",
+    "background_safe"
+  ]
+}

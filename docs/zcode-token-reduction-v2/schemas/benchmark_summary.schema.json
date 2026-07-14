@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/benchmark_summary.v1.schema.json",
+  "title": "benchmark_summary.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "benchmark_summary.v1"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "primary_metric": {
+      "const": "effective_codex_work"
+    },
+    "primary_metric_formula": {
+      "const": "uncached_input_tokens + output_tokens + reasoning_output_tokens"
+    },
+    "mode_totals": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "task_totals": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "quality_gates": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "context_intake": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "operator_total_usage": {
+      "type": "object"
+    },
+    "benchmark_clean_usage": {
+      "type": "object"
+    },
+    "next_optimization_target": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "primary_metric",
+    "primary_metric_formula",
+    "mode_totals",
+    "task_totals",
+    "quality_gates",
+    "next_optimization_target"
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ZCode Operational Gateway Result",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "operational_gateway_schema_version",
+    "route_used",
+    "zcode_usage_status",
+    "zcode_total_tokens",
+    "fallback_reason",
+    "strict_accepted",
+    "strict_gate_weakened",
+    "claim_family",
+    "usage_zero_guard"
+  ],
+  "properties": {
+    "operational_gateway_schema_version": {
+      "const": 1
+    },
+    "route_used": {
+      "enum": ["zcode_cli", "zcode_app_cdp", "codex_fallback"]
+    },
+    "zcode_attempted": {
+      "type": "boolean"
+    },
+    "zcode_ok": {
+      "type": "boolean"
+    },
+    "zcode_usage_status": {
+      "enum": ["measured", "unavailable", "skipped"]
+    },
+    "zcode_total_tokens": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "fallback_reason": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "provider_timeout",
+        "provider_overload",
+        "workspace_not_bound",
+        "usage_unavailable",
+        "validation_failure",
+        "strict_failure",
+        "zcode_unavailable",
+        "skipped_by_policy",
+        "routing_config_missing"
+      ]
+    },
+    "provider_error_kind": {
+      "type": ["string", "null"]
+    },
+    "strict_accepted": {
+      "type": ["boolean", "null"]
+    },
+    "strict_gate_weakened": {
+      "const": false
+    },
+    "task_acceptance_ready": {
+      "type": "boolean"
+    },
+    "claim_family": {
+      "enum": [
+        "codex_mediated_zcode_cli",
+        "codex_mediated_zcode_app_cdp",
+        "codex_fallback_no_zcode_claim"
+      ]
+    },
+    "usage_zero_guard": {
+      "const": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "zcode_usage_status": {
+            "const": "measured"
+          }
+        },
+        "required": ["zcode_usage_status"]
+      },
+      "then": {
+        "properties": {
+          "zcode_total_tokens": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "zcode_usage_status": {
+            "enum": ["unavailable", "skipped"]
+          }
+        },
+        "required": ["zcode_usage_status"]
+      },
+      "then": {
+        "properties": {
+          "zcode_total_tokens": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "route_used": {
+            "const": "codex_fallback"
+          }
+        },
+        "required": ["route_used"]
+      },
+      "then": {
+        "properties": {
+          "claim_family": {
+            "const": "codex_fallback_no_zcode_claim"
+          }
+        }
+      }
+    }
+  ]
+}

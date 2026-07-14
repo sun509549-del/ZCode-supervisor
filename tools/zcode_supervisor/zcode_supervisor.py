@@ -14,18 +14,35 @@ import sys
 import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
 
 try:
     from .auto_route import add_auto_route_parser
     from .repo_setup import install_repo_command
+    from ..zcode_eval.strict_contract import (
+        DEFAULT_RUBRIC_DIR,
+        build_acceptance_result_for_payload,
+        build_contract_payload,
+        json_bytes,
+        read_json_object,
+    )
 except ImportError:  # pragma: no cover - direct script execution
     from auto_route import add_auto_route_parser
     from repo_setup import install_repo_command
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from zcode_eval.strict_contract import (  # type: ignore[no-redef]
+        DEFAULT_RUBRIC_DIR,
+        build_acceptance_result_for_payload,
+        build_contract_payload,
+        json_bytes,
+        read_json_object,
+    )
 
 VERSION = 1
 SKIP_DIRS = {".git", "node_modules", "__pycache__", "dist", "build", "coverage"}
+SUPERVISOR_ARTIFACT_PREFIXES = (".codex/zcode/runs/", ".local/zcode/runs/")
 SECRET_PATH_NEEDLES = (".env", "id_rsa", "id_ed25519", ".ssh", "credential", "credentials")
 TASK_CLASSES = (
     "small-fix",
@@ -43,6 +60,26 @@ DEFAULT_CONTEXT_POLICY = (
     "Use targeted reads and file references first. Do not paste or request the "
     "whole repository unless the task class requires project-level inventory."
 )
+DEFAULT_ACCEPTANCE_CRITERIA = (
+    "All changes stay within allowed files and max changed files.",
+    "Validation command passes under Codex supervisor audit.",
+    "Implementation matches the objective without broad refactors.",
+)
+DEFAULT_WHAT_NOT_TO_DO = (
+    "Do not edit files outside allowed files.",
+    "Do not edit tests unless they are explicitly allowed.",
+    "Do not read, print, or modify secrets, credentials, .env*, or files outside the workspace.",
+    "Do not weaken validation, delete evidence, or hide failed commands.",
+)
+DEFAULT_FINAL_REPORT_SHAPE = (
+    "Changed files",
+    "Validation result",
+    "Acceptance criteria checked",
+    "Remaining risks or blockers",
+    "Recommendation: accept / inspect / reject",
+)
+WORKER_FINALIZATION_MODES = ("zcode_owned", "supervisor_owned")
+DEFAULT_COMPLETION_MARKER_PATH = ".codex/zcode/runs/worker-completion.json"
 SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*['\"]?[^'\"\s]{12,}"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
@@ -54,6 +91,7 @@ MAX_COLOR_SAMPLE_DECOMPRESSED_BYTES = 50_000_000
 DEFAULT_VISION_SERVICE = "zai-mcp-server"
 IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
 COLOR_SAMPLE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+DEFAULT_STRICT_SELF_AUDIT_PATH = ".codex/zcode/runs/zcode_self_audit.json"
 
 
 @dataclass(frozen=True)
@@ -290,6 +328,69 @@ def first_regex_group(text: str, patterns: tuple[str, ...]) -> str | None:
     return None
 
 
+def clean_lines(items: list[str] | tuple[str, ...]) -> list[str]:
+    return [item.strip() for item in items if item and item.strip()]
+
+
+def render_bullets(title: str, items: list[str]) -> str:
+    if not items:
+        return ""
+    rendered = "\n".join(f"- {item}" for item in items)
+    return f"{title}:\n{rendered}\n\n"
+
+
+def render_strict_contract_block(packet: dict[str, Any]) -> str:
+    if packet.get("worker_finalization") == "supervisor_owned":
+        return ""
+    strict = packet.get("strict_contract")
+    if not isinstance(strict, dict) or not strict.get("enabled"):
+        return ""
+    contract = strict.get("task_contract") if isinstance(strict.get("task_contract"), dict) else {}
+    contract_json = json.dumps(contract, indent=2, sort_keys=True)
+    self_audit_path = strict.get("self_audit_path") or DEFAULT_STRICT_SELF_AUDIT_PATH
+    return (
+        "Strict contract packet:\n"
+        "- The Codex task_contract below is authoritative.\n"
+        "- Do not decide success by your own model criteria.\n"
+        "- Do not return pass unless every blocking requirement has evidence.\n"
+        "- If any blocking requirement is ambiguous, unverifiable, or impossible within allowed files, return blocked with reasons instead of guessing.\n"
+        f"- Write the required zcode_self_audit.v1 JSON to: {self_audit_path}\n"
+        "- Write or update the self-audit immediately after completing the code edit, before any lengthy final explanation or optional local validation attempts.\n"
+        "- The self-audit must use exact root keys: schema_version, contract_id, task_id, overall_status, requirements, edge_cases, validation, deviations_from_plan, unresolved_questions, risk_flags, blocked_reasons.\n"
+        "- overall_status values must be exactly: pass, fail, blocked, or unknown. Never use satisfied for overall_status.\n"
+        "- Use requirements[] only; do not use aliases like requirement_trace or requirements_evidence.\n"
+        "- Requirement status values must be exactly: satisfied, not_satisfied, blocked, not_applicable, or unknown.\n"
+        "- Edge-case status values must be exactly: covered, not_covered, blocked, or unknown.\n"
+        "- Evidence entries must be objects with type, ref, and summary; allowed evidence types are changed_file, validation_result, diffstat, code_reference, test_output, manifest, and note.\n"
+        "- For every evidence_required entry in a blocking requirement, include evidence with that exact type; code_reference does not substitute for changed_file, diffstat, or validation_result.\n"
+        "- If local validation cannot be run, set validation.result to skipped or unknown and explain it; Codex supervisor validation is authoritative and may backfill this evidence after your turn.\n"
+        "- Do not set overall_status to blocked solely because local validation could not run. Use blocked for non-validation blockers, impossible requirements, unsafe scope, or unresolved ambiguity.\n"
+        "- Do not record deviations for implementation details that satisfy the task_contract plan and stay within its diff budget; reserve deviations for material plan, scope, or safety changes.\n"
+        "- If there are no deviations, unresolved questions, risk flags, or blocked reasons, use empty arrays; do not add informational 'no deviations' or local-validation-only risk entries.\n"
+        "- The self-audit must include requirement evidence, edge-case coverage, validation evidence, changed-file evidence, deviations, unresolved questions, risk flags, and blocked reasons.\n"
+        "- Raw stdout/stderr, provider keys, credentials, auth files, and secret-bearing logs must not be copied into the self-audit.\n\n"
+        "task_contract.json:\n"
+        f"{contract_json}\n\n"
+    )
+
+
+def render_worker_finalization_block(packet: dict[str, Any]) -> str:
+    if packet.get("worker_finalization") != "supervisor_owned":
+        return ""
+    marker = packet.get("completion_marker_path") or DEFAULT_COMPLETION_MARKER_PATH
+    return (
+        "Worker finalization: supervisor_owned\n"
+        "- Implement the requested code change only.\n"
+        "- Do not write a zcode_self_audit.json narrative; Codex supervisor performs strict checks after your turn.\n"
+        "- Do not produce a long final report; keep any final response compact.\n"
+        "- Do not use broad exploration, web/search/MCP, or subagents unless the packet explicitly requires them.\n"
+        "- After writing artifacts, write a compact JSON completion marker to: "
+        f"{marker}\n"
+        "- Completion marker keys: schema_version, status, changed_files, validation_attempted, notes.\n"
+        "- Codex supervisor reruns validation, acceptance, strict checks, and final reporting.\n\n"
+    )
+
+
 def classify_provider_error(*, stdout: str = "", stderr: str = "", exit_code: int | None = None) -> dict[str, Any]:
     text = f"{stderr}\n{stdout}"
     provider_code = first_regex_group(
@@ -386,7 +487,12 @@ def make_prompt(packet: dict[str, Any]) -> str:
         f"Context policy: {packet['context_policy']}\n"
         f"Allowed files: {allowed}\n"
         f"Forbidden files: {forbidden}\n"
-        f"Validation: {packet['validation']} (run by Codex supervisor after the ZCode turn)\n\n"
+        f"Validation command: {packet['validation']} (you may run this exact command as a black-box check; Codex supervisor reruns it after your turn)\n\n"
+        f"{render_bullets('Expected outputs', packet.get('expected_outputs', []))}"
+        f"{render_bullets('Acceptance criteria', packet.get('acceptance_criteria', []))}"
+        f"{render_bullets('What not to do', packet.get('what_not_to_do', []))}"
+        f"{render_worker_finalization_block(packet)}"
+        f"{render_strict_contract_block(packet)}"
         f"{vision_block}"
         "Rules:\n"
         "- Read only the minimum files needed.\n"
@@ -395,12 +501,60 @@ def make_prompt(packet: dict[str, Any]) -> str:
         "- For root-cause tasks, analyze the call chain and regression surface before editing.\n"
         "- For production-gate tasks, enforce style, dependency, test, and commit-boundary constraints.\n"
         "- If the task needs broader risk than the packet allows, stop and report.\n"
-        "- Do not inspect or edit secrets, credentials, .env*, or files outside the workspace.\n"
-        "- Do not edit tests unless they are explicitly in Allowed files.\n"
         "- Prefer the smallest fix that satisfies the objective.\n"
-        "- Do not run the validation command yourself; Codex supervisor runs it after your response.\n\n"
-        "Final report: changed files, validation result, remaining risks, accept/inspect/reject recommendation."
+        "- You may run the validation command as a black-box check, but do not inspect validator source.\n"
+        "- Codex supervisor reruns validation and audit after your response; do not claim success unless the black-box check passes or you clearly report why it could not run.\n\n"
+        f"{'' if packet.get('worker_finalization') == 'supervisor_owned' else render_bullets('Required final report shape', packet.get('required_final_report_shape', []))}"
     )
+
+
+def strict_contract_from_args(
+    args: argparse.Namespace,
+    *,
+    allowed: list[str],
+    forbidden: list[str],
+    validation_command: str,
+) -> dict[str, Any] | None:
+    if args.task_contract:
+        contract = read_json_object(args.task_contract)
+        expanded_by_non_llm = False
+    elif args.strict_contract_rubric_id:
+        contract = build_contract_payload(
+            SimpleNamespace(
+                rubric_id=args.strict_contract_rubric_id,
+                task_id=args.strict_contract_task_id or args.out.stem,
+                out=args.out,
+                allowed_file=allowed,
+                forbidden_file=forbidden,
+                validation_command=[validation_command],
+                goal=args.strict_contract_goal,
+                contract_id=args.strict_contract_id,
+                risk_level=args.strict_contract_risk_level,
+                ambiguity_score=args.strict_contract_ambiguity_score,
+                override_json=args.strict_contract_override_json,
+                rubric_dir=args.strict_contract_rubric_dir,
+            )
+        )
+        expanded_by_non_llm = True
+    else:
+        return None
+    if contract.get("schema_version") != "task_contract.v1":
+        raise ValueError("task contract schema_version must be task_contract.v1")
+    if contract.get("task_id") is None or contract.get("contract_id") is None:
+        raise ValueError("task contract must include task_id and contract_id")
+    if args.task_contract_out:
+        write_json(args.task_contract_out, contract)
+    visible_bytes = json_bytes(contract)
+    return {
+        "enabled": True,
+        "task_contract": contract,
+        "self_audit_path": args.strict_contract_self_audit_path,
+        "contract_size": {
+            "codex_visible_contract_bytes": visible_bytes,
+            "zcode_visible_contract_bytes": visible_bytes,
+            "expanded_by_non_llm": expanded_by_non_llm,
+        },
+    }
 
 
 def packet_command(args: argparse.Namespace) -> int:
@@ -426,6 +580,17 @@ def packet_command(args: argparse.Namespace) -> int:
     vision_service = args.vision_service.strip() or DEFAULT_VISION_SERVICE
     sampled_images = [sample["image"] for sample in color_samples]
     image_files = sorted(set(vision_images + sampled_images))
+    expected_outputs = clean_lines(args.expected_output)
+    acceptance_criteria = clean_lines(args.acceptance_criterion) or list(DEFAULT_ACCEPTANCE_CRITERIA)
+    what_not_to_do = list(DEFAULT_WHAT_NOT_TO_DO) + clean_lines(args.what_not_to_do)
+    final_report_shape = clean_lines(args.final_report_line) or list(DEFAULT_FINAL_REPORT_SHAPE)
+    worker_finalization = args.worker_finalization
+    strict_contract = strict_contract_from_args(
+        args,
+        allowed=sorted(set(allowed)),
+        forbidden=sorted(set(forbidden)),
+        validation_command=args.validation.strip(),
+    )
 
     packet = {
         "version": VERSION,
@@ -436,11 +601,25 @@ def packet_command(args: argparse.Namespace) -> int:
         "allowed_files": sorted(set(allowed)),
         "forbidden_files": sorted(set(forbidden)),
         "validation": args.validation.strip(),
+        "validation_commands": [args.validation.strip()],
+        "expected_outputs": expected_outputs,
+        "acceptance_criteria": acceptance_criteria,
+        "max_changed_files": args.max_changed_files,
+        "what_not_to_do": what_not_to_do,
+        "required_final_report_shape": final_report_shape,
+        "worker_finalization": worker_finalization,
+        "completion_marker_path": DEFAULT_COMPLETION_MARKER_PATH,
+        "artifact_review_contract": {
+            "quality_values": ["pass", "partial", "fail"],
+            "scope_safety_values": ["pass", "fail"],
+            "validation_result_values": ["pass", "fail"],
+            "codex_repair_size_values": ["none", "small polish", "moderate fix", "rewrite needed"],
+            "codex_token_usage_status_values": ["measured", "estimated", "unavailable"],
+        },
         "mode": args.mode,
         "effort": args.effort,
         "task_class": args.task_class,
         "risk_budget": args.risk_budget,
-        "max_changed_files": args.max_changed_files,
         "context_policy": args.context_policy.strip(),
         "goal": args.goal,
         "vision": {
@@ -451,12 +630,17 @@ def packet_command(args: argparse.Namespace) -> int:
             "model_limit": "GLM-5.2 is text-only; use ZCode image service for visual understanding.",
         },
     }
+    if strict_contract is not None:
+        packet["strict_contract"] = strict_contract
     prompt = make_prompt(packet)
     packet["prompt"] = prompt
     packet["prompt_chars"] = len(prompt)
     packet["approx_prompt_tokens"] = approximate_tokens(prompt)
-    if packet["prompt_chars"] > args.max_prompt_chars:
-        return fail(f"prompt exceeds max chars: {packet['prompt_chars']} > {args.max_prompt_chars}")
+    max_prompt_chars = args.max_prompt_chars
+    if strict_contract is not None:
+        max_prompt_chars = max(max_prompt_chars, args.strict_contract_max_prompt_chars)
+    if packet["prompt_chars"] > max_prompt_chars:
+        return fail(f"prompt exceeds max chars: {packet['prompt_chars']} > {max_prompt_chars}")
     write_json(args.out, packet)
     if args.prompt_out:
         args.prompt_out.parent.mkdir(parents=True, exist_ok=True)
@@ -466,7 +650,10 @@ def packet_command(args: argparse.Namespace) -> int:
 
 
 def should_skip(path: Path) -> bool:
-    return any(part in SKIP_DIRS for part in path.parts)
+    rel = path.as_posix()
+    return any(part in SKIP_DIRS for part in path.parts) or any(
+        rel.startswith(prefix) for prefix in SUPERVISOR_ARTIFACT_PREFIXES
+    )
 
 
 def hash_file(path: Path) -> str:
@@ -567,6 +754,283 @@ def run_validation(workspace: Path, command: str, timeout: int) -> dict[str, Any
     }
 
 
+def violation_types(violations: list[dict[str, Any]]) -> set[str]:
+    return {violation.get("type", "unknown") for violation in violations}
+
+
+def checklist_status(condition: bool) -> str:
+    return "pass" if condition else "fail"
+
+
+def build_artifact_review_checklist(
+    packet: dict[str, Any],
+    *,
+    changed: list[str],
+    validation: dict[str, Any],
+    violations: list[dict[str, Any]],
+    secret_findings: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    types = violation_types(violations)
+    max_changed_files = packet.get("max_changed_files", 0)
+    max_changed_ok = not (
+        isinstance(max_changed_files, int)
+        and max_changed_files > 0
+        and len(changed) > max_changed_files
+    )
+    expected_outputs = clean_lines(packet.get("expected_outputs", []))
+    acceptance_criteria = clean_lines(packet.get("acceptance_criteria", []))
+    return [
+        {
+            "id": "allowed_files_declared",
+            "status": checklist_status(bool(packet.get("allowed_files"))),
+            "evidence": packet.get("allowed_files", []),
+        },
+        {
+            "id": "scope_safety",
+            "status": checklist_status(
+                "outside_allowed_files" not in types
+                and "forbidden_files_changed" not in types
+                and "max_changed_files_exceeded" not in types
+            ),
+            "evidence": {"changed_files": changed, "max_changed_files": max_changed_files},
+        },
+        {
+            "id": "forbidden_files_unchanged",
+            "status": checklist_status("forbidden_files_changed" not in types),
+            "evidence": packet.get("forbidden_files", []),
+        },
+        {
+            "id": "max_changed_files_respected",
+            "status": checklist_status(max_changed_ok),
+            "evidence": {"limit": max_changed_files, "actual": len(changed)},
+        },
+        {
+            "id": "validation_passed",
+            "status": checklist_status(validation.get("ok") is True),
+            "evidence": {"returncode": validation.get("returncode")},
+        },
+        {
+            "id": "secret_scan_clear",
+            "status": checklist_status(not secret_findings),
+            "evidence": secret_findings,
+        },
+        {
+            "id": "expected_outputs_review",
+            "status": "codex_review_required" if expected_outputs else "not_applicable",
+            "evidence": expected_outputs,
+        },
+        {
+            "id": "acceptance_criteria_review",
+            "status": "codex_review_required" if acceptance_criteria else "not_applicable",
+            "evidence": acceptance_criteria,
+        },
+        {
+            "id": "final_report_shape_review",
+            "status": "codex_review_required",
+            "evidence": packet.get("required_final_report_shape", []),
+        },
+    ]
+
+
+def scope_safety_result(violations: list[dict[str, Any]]) -> str:
+    unsafe = {
+        "packet_workspace_mismatch",
+        "snapshot_workspace_mismatch",
+        "missing_allowed_files",
+        "outside_allowed_files",
+        "max_changed_files_exceeded",
+        "forbidden_files_changed",
+        "secret_pattern",
+        "unsafe_validation_command",
+    }
+    return "fail" if violation_types(violations) & unsafe else "pass"
+
+
+def artifact_quality_result(violations: list[dict[str, Any]]) -> str:
+    types = violation_types(violations)
+    if not types:
+        return "pass"
+    if types <= {"validation_failed"}:
+        return "partial"
+    return "fail"
+
+
+def codex_repair_size_recommendation(violations: list[dict[str, Any]]) -> str:
+    types = violation_types(violations)
+    if not types:
+        return "none"
+    if types <= {"validation_failed"}:
+        return "small polish"
+    if types & {
+        "packet_workspace_mismatch",
+        "snapshot_workspace_mismatch",
+        "outside_allowed_files",
+        "forbidden_files_changed",
+        "secret_pattern",
+        "unsafe_validation_command",
+    }:
+        return "rewrite needed"
+    return "moderate fix"
+
+
+def strict_self_audit_path(workspace: Path, packet: dict[str, Any], explicit: Path | None) -> Path:
+    if explicit is not None:
+        rel = normalize_rel_path(workspace, str(explicit))
+    else:
+        strict = packet.get("strict_contract") if isinstance(packet.get("strict_contract"), dict) else {}
+        rel = normalize_rel_path(workspace, str(strict.get("self_audit_path") or DEFAULT_STRICT_SELF_AUDIT_PATH))
+    return workspace / rel
+
+
+def supervisor_owned_evidence(evidence_type: str, changed: list[str], validation: dict[str, Any]) -> dict[str, str] | None:
+    if evidence_type == "changed_file":
+        if not changed:
+            return None
+        return {"type": "changed_file", "ref": changed[0], "summary": "changed file recorded by supervisor snapshot"}
+    if evidence_type == "validation_result":
+        return {
+            "type": "validation_result",
+            "ref": "supervisor-validation",
+            "summary": f"validation {'passed' if validation.get('ok') is True else 'failed'} with rc {validation.get('returncode')}",
+        }
+    if evidence_type == "diffstat":
+        return {
+            "type": "diffstat",
+            "ref": "supervisor-diffstat",
+            "summary": f"{len(changed)} changed file(s) recorded by supervisor snapshot",
+        }
+    if evidence_type == "code_reference":
+        if not changed:
+            return None
+        return {"type": "code_reference", "ref": changed[0], "summary": "supervisor-scoped changed file"}
+    if evidence_type in {"test_output", "manifest", "note"}:
+        return {
+            "type": evidence_type,
+            "ref": "supervisor-owned-finalization",
+            "summary": "evidence generated by Codex supervisor-owned finalization",
+        }
+    return None
+
+
+def supervisor_owned_requirement_trace(requirement: dict[str, Any], changed: list[str], validation: dict[str, Any]) -> dict[str, Any]:
+    required_types = requirement.get("evidence_required") or []
+    evidence = [
+        item
+        for evidence_type in required_types
+        if (item := supervisor_owned_evidence(str(evidence_type), changed, validation)) is not None
+    ]
+    if not evidence:
+        for evidence_type in ("validation_result", "changed_file", "diffstat"):
+            item = supervisor_owned_evidence(evidence_type, changed, validation)
+            if item is not None:
+                evidence.append(item)
+    return {
+        "id": requirement.get("id"),
+        "status": "satisfied" if validation.get("ok") is True else "not_satisfied",
+        "evidence": evidence,
+    }
+
+
+def build_supervisor_owned_self_audit(
+    contract: dict[str, Any],
+    *,
+    changed: list[str],
+    validation: dict[str, Any],
+) -> dict[str, Any]:
+    validation_ok = validation.get("ok") is True
+    requirements = [
+        supervisor_owned_requirement_trace(requirement, changed, validation)
+        for requirement in contract.get("requirements") or []
+        if isinstance(requirement, dict)
+    ]
+    edge_cases = []
+    for edge_case in contract.get("edge_cases") or []:
+        if not isinstance(edge_case, dict):
+            continue
+        edge_cases.append(
+            {
+                "id": edge_case.get("id"),
+                "status": "covered" if validation_ok else "not_covered",
+                "evidence": [
+                    {
+                        "type": "validation_result",
+                        "ref": "supervisor-validation",
+                        "summary": "edge coverage is enforced by the validation contract",
+                    }
+                ],
+            }
+        )
+    return {
+        "schema_version": "zcode_self_audit.v1",
+        "contract_id": contract.get("contract_id"),
+        "task_id": contract.get("task_id"),
+        "overall_status": "pass" if validation_ok else "fail",
+        "requirements": requirements,
+        "edge_cases": edge_cases,
+        "validation": {
+            "result": "pass" if validation_ok else "fail",
+            "summary": f"Codex supervisor validation rc={validation.get('returncode')}",
+        },
+        "changed_files": changed,
+        "deviations_from_plan": [],
+        "unresolved_questions": [],
+        "risk_flags": [],
+        "blocked_reasons": [],
+    }
+
+
+def audit_strict_contract(
+    args: argparse.Namespace,
+    packet: dict[str, Any],
+    *,
+    changed: list[str],
+    validation: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    strict = packet.get("strict_contract")
+    if not isinstance(strict, dict) or not strict.get("enabled"):
+        return None, []
+    contract = strict.get("task_contract") if isinstance(strict.get("task_contract"), dict) else None
+    if contract is None:
+        return None, [{"type": "strict_contract_missing", "message": "packet strict_contract.task_contract is missing"}]
+    supervisor_owned = packet.get("worker_finalization") == "supervisor_owned"
+    try:
+        audit_path = strict_self_audit_path(args.workspace.resolve(), packet, args.self_audit)
+    except ValueError as exc:
+        return None, [{"type": "strict_contract_self_audit_path", "message": str(exc)}]
+    if supervisor_owned:
+        self_audit = build_supervisor_owned_self_audit(contract, changed=changed, validation=validation)
+    elif not audit_path.is_file():
+        return None, [{"type": "strict_contract_self_audit_missing", "path": str(audit_path)}]
+    try:
+        if not supervisor_owned:
+            self_audit = read_json_object(audit_path)
+        result = build_acceptance_result_for_payload(
+            SimpleNamespace(
+                experiment_id="run-packet-strict-contract",
+                mode="supervisor_owned_finalization" if supervisor_owned else "manifest_only",
+                validation_result="pass" if validation.get("ok") is True else "fail",
+                validation_exit_code=validation.get("returncode"),
+                changed_file=changed,
+                files_changed=len(changed),
+                insertions=0,
+                deletions=0,
+                codex_repair_size="none",
+                full_diff_read=False,
+                full_log_read=False,
+            ),
+            contract,
+            self_audit,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return None, [{"type": "strict_contract_self_audit_invalid", "message": str(exc)}]
+    if supervisor_owned:
+        result["worker_finalization"] = "supervisor_owned"
+        result["supervisor_owned_finalization"] = True
+    if result.get("accepted") is True:
+        return result, []
+    return result, [{"type": "strict_contract_acceptance_failed", "violations": result.get("violations", [])}]
+
+
 def audit_command(args: argparse.Namespace) -> int:
     workspace = args.workspace.resolve()
     packet = read_json(args.packet)
@@ -613,7 +1077,21 @@ def audit_command(args: argparse.Namespace) -> int:
         validation = run_validation(workspace, validation_command, args.validation_timeout)
         if not validation["ok"]:
             violations.append({"type": "validation_failed", "returncode": validation.get("returncode")})
+    strict_result, strict_violations = audit_strict_contract(
+        args,
+        packet,
+        changed=changed,
+        validation=validation,
+    )
+    violations.extend(strict_violations)
 
+    checklist = build_artifact_review_checklist(
+        packet,
+        changed=changed,
+        validation=validation,
+        violations=violations,
+        secret_findings=secret_findings,
+    )
     payload = {
         "ok": not violations,
         "workspace": str(workspace),
@@ -621,10 +1099,20 @@ def audit_command(args: argparse.Namespace) -> int:
         "changed_files": changes,
         "changed_count": len(changed),
         "validation": validation,
+        "artifact_review_checklist": checklist,
+        "artifact_quality": artifact_quality_result(violations),
+        "scope_safety": scope_safety_result(violations),
+        "validation_result": "pass" if validation.get("ok") is True else "fail",
+        "codex_repair_size_recommendation": codex_repair_size_recommendation(violations),
+        "codex_review_required": [
+            item["id"] for item in checklist if item["status"] == "codex_review_required"
+        ],
         "violations": violations,
         "skipped_secret_files": after_snapshot.skipped_secret_files,
         "skipped_large_files": after_snapshot.skipped_large_files,
     }
+    if strict_result is not None:
+        payload["strict_contract"] = strict_result
     emit_json(payload)
     return 0 if payload["ok"] else 1
 
@@ -639,6 +1127,10 @@ def build_parser() -> argparse.ArgumentParser:
     packet.add_argument("--allowed", action="append", default=[])
     packet.add_argument("--forbidden", action="append", default=[])
     packet.add_argument("--validation", required=True)
+    packet.add_argument("--expected-output", action="append", default=[])
+    packet.add_argument("--acceptance-criterion", action="append", default=[])
+    packet.add_argument("--what-not-to-do", action="append", default=[])
+    packet.add_argument("--final-report-line", action="append", default=[])
     packet.add_argument("--mode", choices=("Plan", "Auto Edit", "Full Access", "Confirm Before Changes"), default="Auto Edit")
     packet.add_argument("--workspace-kind", choices=WORKSPACE_KINDS, default="regular")
     packet.add_argument("--allow-regular-full-access", action="store_true")
@@ -646,6 +1138,7 @@ def build_parser() -> argparse.ArgumentParser:
     packet.add_argument("--task-class", choices=TASK_CLASSES, default="small-fix")
     packet.add_argument("--risk-budget", choices=RISK_BUDGETS, default="low")
     packet.add_argument("--max-changed-files", type=non_negative_int, default=0)
+    packet.add_argument("--worker-finalization", choices=WORKER_FINALIZATION_MODES, default="zcode_owned")
     packet.add_argument("--context-policy", default=DEFAULT_CONTEXT_POLICY)
     packet.add_argument("--vision-image", action="append", default=[])
     packet.add_argument("--vision-color-sample", action="append", default=[])
@@ -653,6 +1146,18 @@ def build_parser() -> argparse.ArgumentParser:
     packet.add_argument("--vision-service", default=DEFAULT_VISION_SERVICE)
     packet.add_argument("--goal", action="store_true")
     packet.add_argument("--max-prompt-chars", type=int, default=5000)
+    packet.add_argument("--task-contract", type=Path)
+    packet.add_argument("--task-contract-out", type=Path)
+    packet.add_argument("--strict-contract-rubric-id")
+    packet.add_argument("--strict-contract-task-id")
+    packet.add_argument("--strict-contract-id")
+    packet.add_argument("--strict-contract-risk-level", choices=("L0", "L1", "L2", "L3", "L4"))
+    packet.add_argument("--strict-contract-ambiguity-score", type=float, default=0)
+    packet.add_argument("--strict-contract-goal")
+    packet.add_argument("--strict-contract-override-json", type=Path)
+    packet.add_argument("--strict-contract-rubric-dir", type=Path, default=DEFAULT_RUBRIC_DIR)
+    packet.add_argument("--strict-contract-self-audit-path", default=DEFAULT_STRICT_SELF_AUDIT_PATH)
+    packet.add_argument("--strict-contract-max-prompt-chars", type=int, default=12000)
     packet.add_argument("--out", type=Path, required=True)
     packet.add_argument("--prompt-out", type=Path)
     packet.set_defaults(func=packet_command)
@@ -666,6 +1171,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--workspace", type=Path, required=True)
     audit.add_argument("--snapshot", type=Path, required=True)
     audit.add_argument("--packet", type=Path, required=True)
+    audit.add_argument("--self-audit", type=Path)
     audit.add_argument("--validation-timeout", type=int, default=60)
     audit.set_defaults(func=audit_command)
 

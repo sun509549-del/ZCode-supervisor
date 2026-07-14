@@ -1,0 +1,123 @@
+{
+  "schema_version": "rubric.v1",
+  "rubric_id": "single_file_fixture_contract.v1",
+  "rubric_version": 1,
+  "description": "Generic strict contract for deterministic single-file benchmark fixtures.",
+  "default_risk_level": "L1",
+  "goal_template": "Satisfy a deterministic local fixture by changing only the allowed implementation file.",
+  "non_goals": [
+    "Do not edit tests or package metadata",
+    "Do not add dependencies",
+    "Do not use network access",
+    "Do not broaden the task beyond the fixture contract"
+  ],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "must": "The local fixture validation command must pass.",
+      "verification": "The configured validation command exits 0.",
+      "evidence_required": [
+        "validation_result"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "Do not skip validation",
+        "Do not replace validation with a weaker command"
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "must": "Only the allowed implementation file may change.",
+      "verification": "Changed-file evidence shows the diff is scoped to allowed files.",
+      "evidence_required": [
+        "changed_file",
+        "diffstat"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "Do not edit tests",
+        "Do not edit package metadata",
+        "Do not edit generated validation artifacts"
+      ]
+    },
+    {
+      "id": "REQ-003",
+      "must": "The final artifact must preserve the fixture's deterministic contract instead of hardcoding a hidden external dependency.",
+      "verification": "Diff and validation evidence show a local implementation fix.",
+      "evidence_required": [
+        "code_reference",
+        "validation_result"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "No network calls",
+        "No secret reads",
+        "No fixture test weakening"
+      ]
+    }
+  ],
+  "edge_cases": [
+    {
+      "id": "EDGE-001",
+      "case": "allowed-file-only scope",
+      "expected": "Only the configured source file changes.",
+      "evidence_required": [
+        "changed_file"
+      ]
+    },
+    {
+      "id": "EDGE-002",
+      "case": "deterministic local validation",
+      "expected": "Validation can run without live providers or network access.",
+      "evidence_required": [
+        "validation_result"
+      ]
+    }
+  ],
+  "forbidden_actions": [
+    "change tests",
+    "edit forbidden files",
+    "add dependencies",
+    "read secrets",
+    "use network access",
+    "weaken strict acceptance"
+  ],
+  "implementation_plan": [
+    {
+      "id": "PLAN-001",
+      "step": "Inspect the allowed implementation file and the fixture contract.",
+      "expected_change": "Identify the smallest local behavior mismatch.",
+      "max_diff_hint": null
+    },
+    {
+      "id": "PLAN-002",
+      "step": "Apply the minimal implementation fix.",
+      "expected_change": "One allowed source file changes.",
+      "max_diff_hint": "+30/-30 soft"
+    },
+    {
+      "id": "PLAN-003",
+      "step": "Run validation and produce self-audit evidence.",
+      "expected_change": "No further changes unless validation fails.",
+      "max_diff_hint": null
+    }
+  ],
+  "expected_diff_budget": {
+    "files_changed_max": 1,
+    "insertions_soft_max": 30,
+    "deletions_soft_max": 30,
+    "if_exceeded": "add_risk_flag_and_explain"
+  },
+  "acceptance_rules": [
+    "All blocking requirements have evidence",
+    "Validation commands pass",
+    "Only allowed files are changed",
+    "No secret/path safety findings",
+    "Diff budget is met or risk-flagged",
+    "No unresolved questions remain on pass"
+  ],
+  "known_failures": []
+}

@@ -1,0 +1,98 @@
+{
+  "schema_version": "rubric.v1",
+  "rubric_id": "policy_exact_label_routing.v1",
+  "rubric_version": 1,
+  "description": "Policy routing exact label contract.",
+  "default_risk_level": "L2",
+  "goal_template": "Preserve exact policy reason labels and routing behavior.",
+  "non_goals": [
+    "Do not rename labels unless explicitly required",
+    "Do not broaden policy matching",
+    "Do not change tests"
+  ],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "must": "Exact policy labels must match the contract.",
+      "verification": "Policy validation passes.",
+      "evidence_required": [
+        "validation_result"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "No near-synonym label substitutions"
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "must": "Routing branch behavior must remain scoped and deterministic.",
+      "verification": "Diff and validation show only intended branch/label update.",
+      "evidence_required": [
+        "diffstat",
+        "code_reference"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "No unrelated routing changes"
+      ]
+    },
+    {
+      "id": "REQ-003",
+      "must": "Only allowed files may change.",
+      "verification": "Allowed-files check passes.",
+      "evidence_required": [
+        "changed_file"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": []
+    }
+  ],
+  "edge_cases": [
+    {
+      "id": "EDGE-001",
+      "case": "exact label spelling/casing",
+      "expected": "matches contract exactly",
+      "evidence_required": [
+        "validation_result"
+      ]
+    }
+  ],
+  "forbidden_actions": [
+    "change tests",
+    "broaden policy logic",
+    "edit forbidden files",
+    "rename labels outside contract"
+  ],
+  "implementation_plan": [
+    {
+      "id": "PLAN-001",
+      "step": "Inspect allowed policy routing file.",
+      "expected_change": "Identify exact mismatch.",
+      "max_diff_hint": null
+    },
+    {
+      "id": "PLAN-002",
+      "step": "Apply exact label/routing fix.",
+      "expected_change": "Minimal targeted change.",
+      "max_diff_hint": "+16/-12 soft"
+    }
+  ],
+  "expected_diff_budget": {
+    "files_changed_max": 1,
+    "insertions_soft_max": 16,
+    "deletions_soft_max": 12,
+    "if_exceeded": "add_risk_flag_and_explain"
+  },
+  "acceptance_rules": [
+    "All blocking requirements have evidence",
+    "Validation commands pass",
+    "Only allowed files are changed",
+    "No secret/path safety findings",
+    "Diff budget is met or risk-flagged",
+    "No unresolved questions remain on pass"
+  ],
+  "known_failures": []
+}

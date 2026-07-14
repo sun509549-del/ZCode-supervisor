@@ -1,4 +1,6 @@
 import json
+import contextlib
+import io
 import struct
 import tempfile
 import unittest
@@ -9,6 +11,12 @@ from tools.zcode_supervisor.zcode_supervisor import classify_provider_error, cla
 
 
 class ZCodeSupervisorTests(unittest.TestCase):
+    def _main_json(self, argv):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(argv)
+        return exit_code, json.loads(output.getvalue())
+
     def test_provider_error_classifier_extracts_zcode_overload(self):
         stderr = (
             "ProviderBusinessError: [1305][The service may be temporarily overloaded, please try again later][req-1]\n"
@@ -114,6 +122,84 @@ class ZCodeSupervisorTests(unittest.TestCase):
                 main(["audit", "--workspace", str(workspace), "--snapshot", str(snapshot), "--packet", str(packet)]),
                 0,
             )
+
+    def test_audit_ignores_supervisor_run_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._fixture_workspace(Path(tmp))
+            snapshot = Path(tmp) / "snapshot.json"
+            packet = Path(tmp) / "packet.json"
+
+            self.assertEqual(main(["snapshot", "--workspace", str(workspace), "--out", str(snapshot)]), 0)
+            self.assertEqual(
+                main(
+                    [
+                        "packet",
+                        "--workspace",
+                        str(workspace),
+                        "--objective",
+                        "update app implementation",
+                        "--allowed",
+                        "src/app.js",
+                        "--validation",
+                        "python3 -c 'print(42)'",
+                        "--out",
+                        str(packet),
+                    ]
+                ),
+                0,
+            )
+            (workspace / "src/app.js").write_text("export const value = 2;\n", encoding="utf-8")
+            run_artifact = workspace / ".codex" / "zcode" / "runs" / "task.zcode.json"
+            run_artifact.parent.mkdir(parents=True)
+            run_artifact.write_text('{"status":"running"}\n', encoding="utf-8")
+
+            exit_code, payload = self._main_json(
+                ["audit", "--workspace", str(workspace), "--snapshot", str(snapshot), "--packet", str(packet)]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["changed_count"], 1)
+            self.assertEqual(payload["changed_files"]["added"], [])
+            self.assertNotIn(".codex/zcode/runs/task.zcode.json", payload["changed_files"]["modified"])
+
+    def test_audit_ignores_local_supervisor_run_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._fixture_workspace(Path(tmp))
+            snapshot = Path(tmp) / "snapshot.json"
+            packet = Path(tmp) / "packet.json"
+
+            self.assertEqual(main(["snapshot", "--workspace", str(workspace), "--out", str(snapshot)]), 0)
+            self.assertEqual(
+                main(
+                    [
+                        "packet",
+                        "--workspace",
+                        str(workspace),
+                        "--objective",
+                        "update app implementation",
+                        "--allowed",
+                        "src/app.js",
+                        "--validation",
+                        "python3 -c 'print(42)'",
+                        "--out",
+                        str(packet),
+                    ]
+                ),
+                0,
+            )
+            (workspace / "src/app.js").write_text("export const value = 2;\n", encoding="utf-8")
+            run_artifact = workspace / ".local" / "zcode" / "runs" / "task.zcode.json"
+            run_artifact.parent.mkdir(parents=True)
+            run_artifact.write_text('{"status":"running"}\n', encoding="utf-8")
+
+            exit_code, payload = self._main_json(
+                ["audit", "--workspace", str(workspace), "--snapshot", str(snapshot), "--packet", str(packet)]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["changed_count"], 1)
+            self.assertEqual(payload["changed_files"]["added"], [])
+            self.assertNotIn(".local/zcode/runs/task.zcode.json", payload["changed_files"]["modified"])
 
     def test_audit_blocks_forbidden_and_outside_allowed_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -310,8 +396,103 @@ class ZCodeSupervisorTests(unittest.TestCase):
             )
             payload = json.loads(packet.read_text(encoding="utf-8"))
             self.assertTrue(payload["prompt"].startswith("/goal "))
-            self.assertLess(payload["approx_prompt_tokens"], 460)
+            self.assertLess(payload["approx_prompt_tokens"], 700)
             self.assertEqual(prompt.read_text(encoding="utf-8"), payload["prompt"])
+
+    def test_packet_records_bounded_implementation_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._fixture_workspace(Path(tmp))
+            packet = Path(tmp) / "packet.json"
+
+            self.assertEqual(
+                main(
+                    [
+                        "packet",
+                        "--workspace",
+                        str(workspace),
+                        "--objective",
+                        "fix the app value",
+                        "--allowed",
+                        "src/app.js",
+                        "--forbidden",
+                        "README.md",
+                        "--validation",
+                        "python3 -c 'print(42)'",
+                        "--expected-output",
+                        "src/app.js exports the corrected value",
+                        "--acceptance-criterion",
+                        "Codex audit reports artifact_quality=pass",
+                        "--what-not-to-do",
+                        "Do not add dependencies",
+                        "--final-report-line",
+                        "Changed files",
+                        "--max-changed-files",
+                        "1",
+                        "--out",
+                        str(packet),
+                    ]
+                ),
+                0,
+            )
+            payload = json.loads(packet.read_text(encoding="utf-8"))
+            self.assertEqual(payload["expected_outputs"], ["src/app.js exports the corrected value"])
+            self.assertEqual(payload["acceptance_criteria"], ["Codex audit reports artifact_quality=pass"])
+            self.assertIn("Do not add dependencies", payload["what_not_to_do"])
+            self.assertEqual(payload["required_final_report_shape"], ["Changed files"])
+            self.assertEqual(payload["validation_commands"], ["python3 -c 'print(42)'"])
+            self.assertEqual(payload["artifact_review_contract"]["codex_repair_size_values"], [
+                "none",
+                "small polish",
+                "moderate fix",
+                "rewrite needed",
+            ])
+            self.assertIn("Expected outputs:", payload["prompt"])
+            self.assertIn("Required final report shape:", payload["prompt"])
+
+    def test_packet_can_embed_strict_contract_from_rubric(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._fixture_workspace(Path(tmp))
+            packet = Path(tmp) / "packet.json"
+            task_contract = Path(tmp) / "task_contract.json"
+
+            exit_code, payload = self._main_json(
+                [
+                    "packet",
+                    "--workspace",
+                    str(workspace),
+                    "--objective",
+                    "fix the app value",
+                    "--allowed",
+                    "src/app.js",
+                    "--validation",
+                    "python3 -c 'print(42)'",
+                    "--strict-contract-rubric-id",
+                    "billing_cent_rounding.v1",
+                    "--strict-contract-task-id",
+                    "billing-credit-contract",
+                    "--task-contract-out",
+                    str(task_contract),
+                    "--out",
+                    str(packet),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            strict = payload["strict_contract"]
+            self.assertTrue(strict["enabled"])
+            self.assertEqual(strict["task_contract"]["schema_version"], "task_contract.v1")
+            self.assertEqual(strict["task_contract"]["task_id"], "billing-credit-contract")
+            self.assertTrue(strict["contract_size"]["expanded_by_non_llm"])
+            self.assertTrue(task_contract.is_file())
+            self.assertIn("The Codex task_contract below is authoritative", payload["prompt"])
+            self.assertIn("zcode_self_audit.v1", payload["prompt"])
+            self.assertIn("overall_status, requirements, edge_cases, validation", payload["prompt"])
+            self.assertIn("Never use satisfied for overall_status", payload["prompt"])
+            self.assertIn("immediately after completing the code edit", payload["prompt"])
+            self.assertIn("use empty arrays", payload["prompt"])
+            self.assertIn("do not use aliases like requirement_trace", payload["prompt"])
+            self.assertIn("include evidence with that exact type", payload["prompt"])
+            self.assertIn("reserve deviations for material plan", payload["prompt"])
 
     def test_packet_records_glm52_operating_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -626,6 +807,83 @@ class ZCodeSupervisorTests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             self.assertFalse(packet.exists())
 
+    def test_audit_reports_artifact_review_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._fixture_workspace(Path(tmp))
+            snapshot = Path(tmp) / "snapshot.json"
+            packet = Path(tmp) / "packet.json"
+
+            self.assertEqual(main(["snapshot", "--workspace", str(workspace), "--out", str(snapshot)]), 0)
+            self.assertEqual(
+                main(
+                    [
+                        "packet",
+                        "--workspace",
+                        str(workspace),
+                        "--objective",
+                        "update app implementation",
+                        "--allowed",
+                        "src/app.js",
+                        "--validation",
+                        "python3 -c 'print(42)'",
+                        "--expected-output",
+                        "src/app.js contains value 2",
+                        "--acceptance-criterion",
+                        "validation passes",
+                        "--max-changed-files",
+                        "1",
+                        "--out",
+                        str(packet),
+                    ]
+                ),
+                0,
+            )
+            (workspace / "src/app.js").write_text("export const value = 2;\n", encoding="utf-8")
+
+            exit_code, payload = self._main_json(
+                ["audit", "--workspace", str(workspace), "--snapshot", str(snapshot), "--packet", str(packet)]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["artifact_quality"], "pass")
+            self.assertEqual(payload["scope_safety"], "pass")
+            self.assertEqual(payload["validation_result"], "pass")
+            self.assertEqual(payload["codex_repair_size_recommendation"], "none")
+            checklist = {item["id"]: item for item in payload["artifact_review_checklist"]}
+            self.assertEqual(checklist["scope_safety"]["status"], "pass")
+            self.assertEqual(checklist["expected_outputs_review"]["status"], "codex_review_required")
+
+    def test_audit_fails_strict_contract_when_self_audit_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, snapshot, packet, _contract = self._strict_contract_audit_fixture(Path(tmp))
+            (workspace / "src/app.js").write_text("export const value = 2;\n", encoding="utf-8")
+
+            exit_code, payload = self._main_json(
+                ["audit", "--workspace", str(workspace), "--snapshot", str(snapshot), "--packet", str(packet)]
+            )
+
+            self.assertEqual(exit_code, 1)
+            self.assertFalse(payload["ok"])
+            self.assertIn("strict_contract_self_audit_missing", {item["type"] for item in payload["violations"]})
+
+    def test_audit_accepts_strict_contract_self_audit_trace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, snapshot, packet, contract = self._strict_contract_audit_fixture(Path(tmp))
+            (workspace / "src/app.js").write_text("export const value = 2;\n", encoding="utf-8")
+            audit_path = workspace / ".codex" / "zcode" / "runs" / "zcode_self_audit.json"
+            audit_path.parent.mkdir(parents=True)
+            audit_path.write_text(json.dumps(self._strict_self_audit(contract)), encoding="utf-8")
+
+            exit_code, payload = self._main_json(
+                ["audit", "--workspace", str(workspace), "--snapshot", str(snapshot), "--packet", str(packet)]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["strict_contract"]["accepted"])
+            self.assertEqual(payload["strict_contract"]["violations"], [])
+            self.assertEqual(payload["strict_contract"]["trace_coverage"]["requirements_with_evidence"], 3)
+
     def test_packet_rejects_shell_wrapped_destructive_validation_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._fixture_workspace(Path(tmp))
@@ -656,6 +914,59 @@ class ZCodeSupervisorTests(unittest.TestCase):
         (workspace / "src/app.js").write_text("export const value = 1;\n", encoding="utf-8")
         (workspace / "README.md").write_text("fixture\n", encoding="utf-8")
         return workspace
+
+    def _strict_contract_audit_fixture(self, root: Path):
+        workspace = self._fixture_workspace(root)
+        snapshot = root / "snapshot.json"
+        packet = root / "packet.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["snapshot", "--workspace", str(workspace), "--out", str(snapshot)]), 0)
+            self.assertEqual(
+                main(
+                    [
+                        "packet",
+                        "--workspace",
+                        str(workspace),
+                        "--objective",
+                        "update app implementation",
+                        "--allowed",
+                        "src/app.js",
+                        "--validation",
+                        "python3 -c 'print(42)'",
+                        "--strict-contract-rubric-id",
+                        "billing_cent_rounding.v1",
+                        "--strict-contract-task-id",
+                        "billing-credit-contract",
+                        "--out",
+                        str(packet),
+                    ]
+                ),
+                0,
+            )
+        payload = json.loads(packet.read_text(encoding="utf-8"))
+        return workspace, snapshot, packet, payload["strict_contract"]["task_contract"]
+
+    def _strict_self_audit(self, contract: dict) -> dict:
+        requirements = []
+        for requirement in contract["requirements"]:
+            evidence = []
+            for evidence_type in requirement["evidence_required"]:
+                ref = "src/app.js" if evidence_type == "changed_file" else f"{evidence_type}.json"
+                evidence.append({"type": evidence_type, "ref": ref, "summary": f"{evidence_type} evidence"})
+            requirements.append({"id": requirement["id"], "status": "satisfied", "evidence": evidence})
+        return {
+            "schema_version": "zcode_self_audit.v1",
+            "contract_id": contract["contract_id"],
+            "task_id": contract["task_id"],
+            "overall_status": "pass",
+            "requirements": requirements,
+            "edge_cases": [],
+            "validation": {"result": "pass", "summary": "validation passed"},
+            "deviations_from_plan": [],
+            "unresolved_questions": [],
+            "risk_flags": [],
+            "blocked_reasons": [],
+        }
 
     def _write_rgb_png(self, path: Path, width: int, height: int, pixels: list[list[tuple[int, int, int]]]) -> None:
         def chunk(kind: bytes, payload: bytes) -> bytes:

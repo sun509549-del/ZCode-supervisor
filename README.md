@@ -8,7 +8,7 @@
 
 # ZCode-supervisor
 
-![Version](https://img.shields.io/badge/version-v0.0.1-blue)
+![Version](https://img.shields.io/badge/version-v0.0.2-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Node](https://img.shields.io/badge/node-%3E%3D22-339933)
 ![Python](https://img.shields.io/badge/python-%3E%3D3.11-3776AB)
@@ -32,38 +32,123 @@ supervision:
 
 This repository is not affiliated with Z.AI or ZCode.
 
+## Current Evidence Status
+
+The measured comparison is complete: ZCode reached 18/20 strict-green tasks
+with 9,729,458 worker tokens, while the same-packet Codex worker reached 20/20
+with 1,885,377 worker tokens. Codex orchestration usage is unavailable. Total
+workflow savings are not claimable, and unavailable usage is not zero. ZCode
+remains optional/experimental rather than the default implementation route.
+See the [ZCode Evidence Decision Checkpoint](docs/zcode-evidence-decision-checkpoint.md)
+for the evidence boundaries and practical recommendation.
+
 ## Quick Start
 
-The current public setup path is the PyPI package through `uvx`:
+Use this when you already have a target repo and want the shortest public path.
+Replace `/ABSOLUTE/PATH/TO/YOUR/TARGET_REPO` with the repo you want Codex and
+ZCode-supervisor to work on.
 
 ```bash
 uvx --from zcode-supervisor zcode-install-repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO
-```
 
-Then check the routing decision before the first delegated task:
-
-```bash
 uvx --from zcode-supervisor zcode-auto-route \
   --workspace /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO \
   --objective "setup smoke check"
 ```
 
-For development from source, clone this repo and run the underlying Python
-command directly:
+This writes repo-local routing files, then returns a JSON routing decision.
+Before real delegated work with `--execute`, install and sign in to ZCode. For
+full prerequisites, source fallback, and troubleshooting, use the
+[Setup Guide](#setup-guide-set-up-one-target-repo).
+
+For the opt-in direct delegated measurement workflow added after PR #10, see
+[Direct Delegated Operational Workflow](docs/direct-delegated-operational-workflow.md).
+Direct mode is separate from codex-mediated claims and does not make ZCode
+worker usage zero.
+
+Strict-contract reports now expose worker comparison fields such as
+`worker_kind`, `worker_provider`, `worker_model`, `worker_usage_status`,
+`worker_usage_unit`, and `worker_usage_no_usage_reason`. Total workflow token
+savings are claimable only when compatible delegated-worker and Codex
+orchestration usage are both measured in token units; quota percent or credits
+are recorded separately and are not converted into tokens.
+
+For the operational direct-mode entrypoint, run the wrapper explicitly:
+
+```bash
+bash scripts/run_direct_delegated_strict_contract.sh \
+  --only billing-credit-contract,vision-card-latest \
+  --dry-run
+```
+
+The wrapper always adds `--delegation-execution direct`; the default harness
+behavior remains codex-mediated unless direct mode is requested.
+
+Before any opt-in rollout decision, run the conservative readiness gate:
+
+```bash
+bash scripts/check_rollout_readiness.sh
+```
+
+It writes machine-readable readiness evidence and keeps production rollout
+blocked without live 20+ provider benchmark evidence, measured worker token
+usage, total workflow savings availability, bounded repair policy, and manual
+approval. Dry-run and fixture evidence are not production evidence. Direct mode
+remains explicit opt-in, and production green-path skip remains disabled. See
+[Rollout Readiness](docs/zcode-strict-contract-v3/ROLLOUT_READINESS.md).
+For the current post-PR #74/#75/#77 decision summary, see
+[ZCode Evidence Decision Checkpoint](docs/zcode-evidence-decision-checkpoint.md).
+
+For the next live-evidence layer, validate a manifest with
+`python3 scripts/check_live_evidence_manifest.py <manifest> --json` before
+feeding it into readiness. The live 20+ provider benchmark is not run unless
+Aki separately approves it. See
+[Live Evidence Collection](docs/zcode-strict-contract-v3/LIVE_EVIDENCE_COLLECTION.md).
+
+Source development and fresh-clone verification for this repository are covered
+in [Fresh Clone Development Check](#fresh-clone-development-check). Release
+details are in [docs/distribution.md](docs/distribution.md). The Homebrew tap is
+archived for now.
+
+## Fresh Clone Development Check
+
+Use this sequence to verify a new clone of this repository itself. It uses only
+local source files for the source smoke check, then runs the repository check
+suite. ZCode desktop/provider setup is not required for this local source
+verification; it is required only for real delegated ZCode tasks.
 
 ```bash
 git clone https://github.com/AkiGarage/ZCode-supervisor.git
 cd ZCode-supervisor
+
+node --version
+python3 --version
+git --version
+uvx --version
+
 python3 tools/zcode_supervisor/zcode_supervisor.py install-repo \
-  --repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO \
+  --repo "$PWD" \
   --write-agents
+
+python3 tools/zcode_supervisor/zcode_supervisor.py auto-route \
+  --workspace "$PWD" \
+  --objective "setup smoke check"
+
+bash scripts/check.sh
 ```
 
-The Homebrew tap is archived for now; clone `AkiGarage/ZCode-supervisor` for
-source work.
+Expected result: the installer reports `"ok": true`, the route check returns a
+JSON decision, and `bash scripts/check.sh` exits `0`.
 
-Release details and verification commands are in
-[docs/distribution.md](docs/distribution.md).
+For the published package path, these CLI smoke checks should also work:
+
+```bash
+uvx --from zcode-supervisor zcode-install-repo --help
+uvx --from zcode-supervisor zcode-auto-route --help
+```
+
+Remaining manual prerequisite: install and sign in to ZCode before running a
+real delegated task with `--execute`.
 
 ## Ask Codex To Set It Up
 
@@ -153,15 +238,16 @@ works, and I understand any remaining manual prerequisite.
 
 ## Setup Guide: Set Up One Target Repo
 
-Use this section when you are starting from zero. The goal is to mark one
-existing repository as a place where Codex can plan and audit while ZCode does
-bounded implementation work.
+Use this section when you are starting from zero or the Quick Start fails. The
+goal is to mark one existing repository as a place where Codex can plan and
+audit while ZCode does bounded implementation work.
 
-### 0. Know The Two Repositories
+### 0. Know The Target Repo
 
-- **This repo:** `ZCode-supervisor`. It contains the supervisor tools.
 - **Target repo:** the repo you want ZCode to help edit. This is the path you
   pass to `zcode-install-repo`.
+- **This repo:** `ZCode-supervisor`. You only need to clone it for source
+  development or source fallback.
 
 `/path/to/target-repo` is a placeholder. Replace it with the absolute path to
 your own target repo, such as:
@@ -177,93 +263,70 @@ and running:
 pwd
 ```
 
-### 1. Put This Supervisor Repo On Disk
+### 1. Check Requirements
 
-If you are reading this on GitHub and do not have the repo locally yet, clone
-it first:
+For setup and local verification:
 
-```bash
-git clone https://github.com/AkiGarage/ZCode-supervisor.git
-cd ZCode-supervisor
-pwd
-```
-
-The `pwd` output is the absolute path to this supervisor repo. If your clone is
-not at `~/dev/ZCode-supervisor`, replace that path in examples with
-your own supervisor repo path.
-
-### 2. Install The Required Apps And Tools
-
-Install and sign in to ZCode first:
-
-- ZCode install docs: https://zcode.z.ai/en/docs/install
-
-Minimum local tools:
-
-- ZCode desktop app installed and connected to a model provider.
+- `uvx` from uv: https://docs.astral.sh/uv/getting-started/installation/
 - Node.js `>=22`.
 - Python `>=3.11`.
 - Git.
 - A POSIX-like shell such as the default macOS Terminal shell.
+
+For real delegated tasks with `--execute`:
+
+- ZCode desktop app installed and signed in: https://zcode.z.ai/en/docs/install
+- ZCode connected to a model provider.
 - Network access to the configured model provider.
 
 Check the local basics:
 
 ```bash
+uvx --version
 node --version
 python3 --version
 git --version
 ```
 
-### 3. Run The Installer From Terminal
+### 2. Run The Installer
 
-Run this in Terminal. You may run it from any current folder, because the
-target repo is provided as an absolute path:
-
-```bash
-zcode-install-repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO
-```
-
-Example:
-
-```bash
-zcode-install-repo ~/work/my-app
-```
-
-This command is setup only. Run it once per target repo; it is not a per-task
-command.
-
-If `zcode-install-repo` is not found, run the supervisor command directly from
-this repo:
-
-```bash
-python3 /absolute/path/to/ZCode-supervisor/tools/zcode_supervisor/zcode_supervisor.py install-repo \
-  --repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO \
-  --write-agents
-```
-
-If your supervisor repo lives somewhere else, replace
-`/absolute/path/to/ZCode-supervisor` with the absolute path from `pwd` in step 1.
-
-### Primary Install Path
-
-The current public setup path is the PyPI package through `uvx`:
+The public setup path is the PyPI package through `uvx`:
 
 ```bash
 uvx --from zcode-supervisor zcode-install-repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO
 ```
 
+Example:
+
+```bash
+uvx --from zcode-supervisor zcode-install-repo ~/work/my-app
+```
+
+This command is setup only. Run it once per target repo; it is not a per-task
+command.
+
+If `uvx` is unavailable or you are developing from source, clone this repo and
+run the underlying Python command directly:
+
+```bash
+git clone https://github.com/AkiGarage/ZCode-supervisor.git
+cd ZCode-supervisor
+python3 tools/zcode_supervisor/zcode_supervisor.py install-repo \
+  --repo /ABSOLUTE/PATH/TO/YOUR/TARGET_REPO \
+  --write-agents
+```
+
 The PyPI package is published through Trusted Publishing, without long-lived
-PyPI tokens. High-assurance users can also download the current
-GitHub Release archive, `v0.0.1`, verify `SHA256SUMS`, and run
-`gh attestation verify` before using it. Homebrew is archived for now; see
+PyPI tokens. High-assurance users can download the release matching the version
+they intend to install from [GitHub Releases](https://github.com/AkiGarage/ZCode-supervisor/releases),
+verify `SHA256SUMS`, and run `gh attestation verify` before using it. Homebrew is archived for now; see
 [docs/distribution.md](docs/distribution.md).
 
 Maintainers should use
 [docs/pypi-trusted-publisher.md](docs/pypi-trusted-publisher.md) before any
 TestPyPI or PyPI publish attempt.
 
-### 4. Confirm What Was Written
+### 3. Confirm What Was Written
 
 The installer writes these files inside the target repo:
 
@@ -276,7 +339,7 @@ The important rule is simple: Codex keeps planning, orchestration, validation,
 audit, recovery, and final acceptance. ZCode only handles bounded
 implementation through `zcodectl run-packet`.
 
-### 5. Check The Route Before Editing
+### 4. Check The Route Before Editing
 
 Use a dry run before implementation work:
 
@@ -293,7 +356,7 @@ Typical results:
 - `codex_direct`: Codex can handle it directly.
 - `ask_user`: pause because the task is high risk.
 
-### 6. Run A Real Delegated Task
+### 5. Run A Real Delegated Task
 
 After Codex has chosen a tight edit scope and validation command:
 
@@ -322,7 +385,7 @@ Codex will trust as the first safety check. Keep both narrow.
 
 ## Repository Snapshot
 
-- **Current version:** `v0.0.1`
+- **Current version:** `v0.0.2`
 - **Primary use case:** delegate bounded coding tasks to ZCode/GLM while Codex
   keeps planning, guardrails, validation, and final review.
 - **Main command path:** `node tools/zcode_control/zcodectl.mjs run-packet`
@@ -360,7 +423,11 @@ Codex will trust as the first safety check. Keep both narrow.
 
 ## Version
 
-Current release: `v0.0.1`
+Current development target: `v0.0.2`
+
+Published package: see [PyPI](https://pypi.org/project/zcode-supervisor/).
+The repository version and package index may briefly differ during an ordered
+release rollout.
 
 Distribution and release preparation: [docs/distribution.md](docs/distribution.md)
 
@@ -378,7 +445,18 @@ The intended workflow is:
 2. Codex snapshots the workspace.
 3. ZCode works inside an isolated workspace or worktree.
 4. Codex runs the supervisor audit.
-5. Codex independently reviews and accepts or rejects the result.
+5. Codex accepts or rejects from the run JSON, changed-file audit, and
+   validation evidence.
+6. For non-trivial repository changes, Codex creates the scoped local commit,
+   then runs `codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+   before push.
+
+The v0.0.2 default is a token-efficient thin launcher/auditor pattern. Codex
+should plan once, choose allowed files and validation, launch ZCode, then use
+the supervisor run JSON as the first acceptance surface. Broad post-run
+reimplementation or project-wide rereads are intentionally avoided because they
+increase Codex-side token usage. `codex-autoreview` remains the final Codex
+quality gate before shipping.
 
 `Full access` should only be used in disposable workspaces or isolated
 worktrees. Packet creation blocks regular-workspace `Full access` by default
@@ -470,10 +548,65 @@ uvx --from zcode-supervisor zcode-auto-route \
   --execute
 ```
 
-`--execute` creates the packet, calls `zcodectl run-packet`, writes run results
-under `.codex/zcode/runs/`, and keeps Codex responsible for final acceptance.
-This is intentionally a smart default rather than a hard lock: high-risk,
-read-only, trivial, and `no-zcode` tasks do not get forced through ZCode.
+`--execute` creates the packet, calls `zcodectl run-packet`, reads the run JSON
+from `.codex/zcode/runs/`, and keeps Codex responsible for final acceptance.
+For implementation packets, auto-route defaults to a non-zero changed-file cap
+based on the allowed-file set, passes a bounded ZCode CLI timeout, and fails the
+delegation when ZCode returns no run JSON or no changed files. Pass
+`--allow-no-change` only when Codex intentionally asked ZCode to inspect an
+already-complete implementation. This is intentionally a smart default rather
+than a hard lock: high-risk, read-only, trivial, and `no-zcode` tasks do not get
+forced through ZCode.
+
+### Thin Launcher / Autoreview Acceptance
+
+To keep supervision bounded, Codex should not behave like a second implementer
+after ZCode returns. Use this acceptance order:
+
+1. Confirm `route=delegate_zcode` and `run_file_exists=true`.
+2. Read the run JSON summary fields: `supervisor_state`, changed files,
+   `audit_ok`, `validation_ok`, attempts, provider errors, and usage/accounting
+   availability.
+3. Reject or retry if the run JSON is missing, scope audit fails, validation
+   fails, or an implementation packet changed no files.
+4. Run the relevant validation command independently when the task risk warrants
+   it or before a ship decision.
+5. Create the scoped local commit, then run
+   `codex-autoreview --mode branch --base origin/main --engine codex --no-web-search`
+   as the final closeout gate before push, PR, or release.
+
+If `autoreview` finds an accepted issue, verify it against the real diff. Prefer
+a narrower follow-up ZCode packet when the repair belongs to the delegated
+implementation. Use Codex direct recovery for supervisor/tooling fixes or when
+ZCode cannot make progress safely. Keep that recovery minimal: Codex may inspect
+the run JSON, the validation output, and the small affected diff, then make the
+smallest auditor repair needed to pass validation. Record that mode separately
+from ZCode-only runs so token and quality comparisons stay honest.
+
+To compare the thin launcher pattern with a heavier "normal supervision" run,
+save `codex exec --json` output for each mode and run:
+
+```bash
+zcode-eval compare-codex-runs \
+  --baseline-label direct_minimal \
+  --run direct_minimal=/path/to/direct-events.jsonl \
+  --run zcode_minimal=/path/to/zcode-events.jsonl \
+  --quality direct_minimal=pass \
+  --quality zcode_minimal=pass \
+  --zcode-run-json zcode_minimal=/path/to/run.zcode.json \
+  --duration direct_minimal=120 \
+  --duration zcode_minimal=80 \
+  --candidate-label zcode_minimal \
+  --min-reduction-percent 75 \
+  --require-quality-pass \
+  --require-zcode-acceptance \
+  --markdown-out artifacts/reports/token-comparison.md
+```
+
+The report includes Codex-side token totals, reduction percentage, duration
+ratio, quality status, and ZCode acceptance evidence. With the gate flags above,
+the command exits non-zero unless the candidate keeps near-80% Codex-side token
+savings and passes the recorded quality / ZCode acceptance checks.
 
 Create a task packet:
 
@@ -597,16 +730,18 @@ node tools/zcode_control/zcodectl.mjs run-packet \
   --mode plan \
   --max-attempts 2 \
   --retry-delay-ms 60000 \
+  --timeout-ms 600000 \
   --usage-snapshot-source auto \
   --out .local/runs/ledger.zcode.json
 ```
 
 `run-packet` sends the supervisor-generated packet prompt to the bundled
 ZCode CLI with the packet workspace as `--cwd`. It avoids GUI/CDP fragility and
-is the preferred Codex control path for headless delegation. If the CLI config
-is not ready, `cli-prompt` and `run-packet` try to bootstrap it from the local
-ZCode desktop GUI config before sending the prompt. Pass `--no-bootstrap` to
-disable that behavior. Use `cli-prompt` for ad-hoc prompts:
+is the preferred Codex control path for headless delegation. Use `--timeout-ms`
+to keep a stalled ZCode CLI from blocking the supervisor indefinitely. If the
+CLI config is not ready, `cli-prompt` and `run-packet` try to bootstrap it from
+the local ZCode desktop GUI config before sending the prompt. Pass
+`--no-bootstrap` to disable that behavior. Use `cli-prompt` for ad-hoc prompts:
 
 `run-packet` treats ZCode provider overload as structured supervisor state. It
 classifies `ProviderBusinessError`, provider code `1305`, temporary overload
@@ -660,6 +795,11 @@ When capture succeeds, the JSON includes:
   percent deltas remain available without inventing token-count deltas.
 - `usage_accounting.quota_windows`: per-window deltas, including reset-change
   detection so a quota-window reset is not misreported as negative usage.
+
+The strict-contract comparison harness maps these into row-level `worker_*`
+fields. `worker_usage_unit: "tokens"` is the only unit that can feed total
+workflow token accounting. `worker_usage_unit: "quota_percent"` or `"credits"`
+is partial non-token evidence and keeps total workflow token savings blocked.
 
 Use `--usage-snapshot-source zai-api` to require direct Z.AI API capture,
 `--usage-snapshot-source codexbar` to require CodexBar CLI capture, or
@@ -851,6 +991,9 @@ python3 tools/zcode_eval/zcode_eval.py import-duel-results \
 ## ZCode Release Monitoring
 
 ZCode compatibility is pinned against `config/zcode-release-baseline.json`.
+The hermetic baseline is `3.3.5`; live `3.3.5` app/provider behavior remains
+**UNVERIFIED**. See [the compatibility evidence](docs/zcode-3.3.5-compatibility.md)
+for the tested contracts, static installed metadata, and live-only boundary.
 Check the official changelog manually with:
 
 ```bash

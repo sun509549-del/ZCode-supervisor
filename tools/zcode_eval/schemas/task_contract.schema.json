@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/task_contract.v1.schema.json",
+  "title": "task_contract.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "task_contract.v1"
+    },
+    "contract_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "rubric_id": {
+      "type": "string"
+    },
+    "rubric_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "risk_level": {
+      "enum": [
+        "L0",
+        "L1",
+        "L2",
+        "L3",
+        "L4"
+      ]
+    },
+    "ambiguity_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "allowed_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "goal": {
+      "type": "string"
+    },
+    "non_goals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^REQ-[0-9]{3,}$"
+          },
+          "must": {
+            "type": "string"
+          },
+          "verification": {
+            "type": "string"
+          },
+          "evidence_required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "applies_to_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "negative_checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "must",
+          "verification",
+          "evidence_required",
+          "blocking"
+        ]
+      }
+    },
+    "edge_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "case": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "evidence_required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "case",
+          "expected"
+        ]
+      }
+    },
+    "forbidden_actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "implementation_plan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^PLAN-[0-9]{3,}$"
+          },
+          "step": {
+            "type": "string"
+          },
+          "expected_change": {
+            "type": "string"
+          },
+          "max_diff_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "step",
+          "expected_change"
+        ]
+      }
+    },
+    "expected_diff_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files_changed_max": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "insertions_soft_max": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deletions_soft_max": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "if_exceeded": {
+          "enum": [
+            "add_risk_flag_and_explain",
+            "fail_closed"
+          ]
+        }
+      },
+      "required": [
+        "files_changed_max",
+        "insertions_soft_max",
+        "deletions_soft_max",
+        "if_exceeded"
+      ]
+    },
+    "validation_commands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "acceptance_rules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "failure_protocol": {
+      "type": "string"
+    },
+    "self_audit_schema_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "contract_id",
+    "task_id",
+    "rubric_id",
+    "risk_level",
+    "allowed_files",
+    "goal",
+    "requirements",
+    "expected_diff_budget",
+    "validation_commands",
+    "failure_protocol"
+  ]
+}

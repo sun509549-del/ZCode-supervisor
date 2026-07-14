@@ -1,0 +1,72 @@
+{
+  "schema_version": "rubric.v1",
+  "rubric_id": "ledger_summary_state_aggregation.v1",
+  "rubric_version": 1,
+  "description": "Ledger summary state aggregation contract.",
+  "default_risk_level": "L1",
+  "goal_template": "Make ledger summary state aggregation match the specified contract with minimal scope.",
+  "non_goals": [
+    "Do not refactor unrelated ledger structures",
+    "Do not change validation expectations"
+  ],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "must": "Ledger summary output must match the specified aggregation contract.",
+      "verification": "Ledger validation passes.",
+      "evidence_required": [
+        "validation_result",
+        "changed_file"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": []
+    },
+    {
+      "id": "REQ-002",
+      "must": "Only allowed files may change.",
+      "verification": "Allowed-files check passes.",
+      "evidence_required": [
+        "changed_file"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": []
+    }
+  ],
+  "edge_cases": [],
+  "forbidden_actions": [
+    "change tests",
+    "edit forbidden files",
+    "broad unrelated refactor"
+  ],
+  "implementation_plan": [
+    {
+      "id": "PLAN-001",
+      "step": "Inspect allowed ledger summary implementation.",
+      "expected_change": "Find state aggregation mismatch.",
+      "max_diff_hint": null
+    },
+    {
+      "id": "PLAN-002",
+      "step": "Apply minimal aggregation fix.",
+      "expected_change": "Small local code change.",
+      "max_diff_hint": "+10/-10 soft"
+    }
+  ],
+  "expected_diff_budget": {
+    "files_changed_max": 1,
+    "insertions_soft_max": 12,
+    "deletions_soft_max": 12,
+    "if_exceeded": "add_risk_flag_and_explain"
+  },
+  "acceptance_rules": [
+    "All blocking requirements have evidence",
+    "Validation commands pass",
+    "Only allowed files are changed",
+    "No secret/path safety findings",
+    "Diff budget is met or risk-flagged",
+    "No unresolved questions remain on pass"
+  ],
+  "known_failures": []
+}

@@ -1,0 +1,118 @@
+{
+  "schema_version": "rubric.v1",
+  "rubric_id": "billing_cent_rounding.v1",
+  "rubric_version": 1,
+  "description": "Billing credit cent rounding and precision contract.",
+  "default_risk_level": "L2",
+  "goal_template": "Preserve exact billing credit cent-rounding behavior with the smallest safe implementation change: sum full creditDollars values and round the aggregate once to cents.",
+  "non_goals": [
+    "Do not refactor unrelated billing helpers",
+    "Do not introduce broad BigInt/helper abstractions unless validation requires it",
+    "Do not change tests or validation expectations"
+  ],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "must": "The fix must satisfy the billing credit cent-rounding contract: do not floor, truncate, or round each row before summing; sum full numeric creditDollars values first, then round the aggregate once to the nearest cent. Required examples: 0.335 + 0.335 + 0.335 => 1.01, and 120.125 + 327.53 => 447.66.",
+      "verification": "Billing validation command passes.",
+      "evidence_required": [
+        "validation_result",
+        "changed_file"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "Do not over-credit fractional cent boundaries",
+        "Do not keep per-row Math.floor/truncation before aggregation"
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "must": "The implementation must be scoped to allowed files only.",
+      "verification": "Allowed-files check passes.",
+      "evidence_required": [
+        "changed_file",
+        "diffstat"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "Do not edit tests",
+        "Do not edit unrelated billing files"
+      ]
+    },
+    {
+      "id": "REQ-003",
+      "must": "Prefer a minimal arithmetic correction over a broad refactor.",
+      "verification": "Diffstat stays within expected budget or a risk flag explains why.",
+      "evidence_required": [
+        "diffstat"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "Do not add broad helper without justification"
+      ]
+    }
+  ],
+  "edge_cases": [
+    {
+      "id": "EDGE-001",
+      "case": "fractional cent boundary",
+      "expected": "aggregate rounding handles 0.335 * 3 as 1.01, not 0.99",
+      "evidence_required": [
+        "validation_result"
+      ]
+    },
+    {
+      "id": "EDGE-002",
+      "case": "zero or near-zero credit",
+      "expected": "no negative/phantom credit",
+      "evidence_required": [
+        "validation_result"
+      ]
+    }
+  ],
+  "forbidden_actions": [
+    "change validation files",
+    "weaken tests",
+    "edit forbidden files",
+    "introduce unrelated dependency",
+    "perform broad refactor"
+  ],
+  "implementation_plan": [
+    {
+      "id": "PLAN-001",
+      "step": "Inspect only allowed billing implementation files.",
+      "expected_change": "Locate any per-row cent floor/truncation or premature rounding.",
+      "max_diff_hint": null
+    },
+    {
+      "id": "PLAN-002",
+      "step": "Apply minimal arithmetic correction.",
+      "expected_change": "Remove per-row floor/truncation and keep only final aggregate cent rounding. If JavaScript floating-point boundaries would make plain Math.round miss the required examples, a tiny local aggregate-rounding helper is allowed and is not a plan deviation.",
+      "max_diff_hint": "+10/-10 soft"
+    },
+    {
+      "id": "PLAN-003",
+      "step": "Run validation and produce self-audit trace.",
+      "expected_change": "No further code changes unless validation fails.",
+      "max_diff_hint": null
+    }
+  ],
+  "expected_diff_budget": {
+    "files_changed_max": 1,
+    "insertions_soft_max": 10,
+    "deletions_soft_max": 10,
+    "if_exceeded": "add_risk_flag_and_explain"
+  },
+  "acceptance_rules": [
+    "All blocking requirements have evidence",
+    "Validation commands pass",
+    "Only allowed files are changed",
+    "No secret/path safety findings",
+    "Diff budget is met or risk-flagged",
+    "No unresolved questions remain on pass"
+  ],
+  "known_failures": []
+}

@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcode-supervisor.local/schemas/contract_ledger.v1.schema.json",
+  "title": "contract_ledger.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "contract_ledger.v1"
+    },
+    "recorded_at": {
+      "type": "string"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "contract_id": {
+      "type": "string"
+    },
+    "rubric_id": {
+      "type": "string"
+    },
+    "risk_level": {
+      "enum": [
+        "L0",
+        "L1",
+        "L2",
+        "L3",
+        "L4"
+      ]
+    },
+    "ambiguity_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "contract_generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "codex_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effective_codex_work": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "usage_missing": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "codex_run_id",
+        "effective_codex_work",
+        "usage_missing"
+      ]
+    },
+    "contract_size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "codex_visible_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "zcode_visible_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expanded_by_non_llm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "codex_visible_bytes",
+        "zcode_visible_bytes",
+        "expanded_by_non_llm"
+      ]
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "edge_case_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "forbidden_action_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "count",
+        "edge_case_count",
+        "forbidden_action_count"
+      ]
+    },
+    "reuse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rubric_reused": {
+          "type": "boolean"
+        },
+        "new_rubric_created": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rubric_reused",
+        "new_rubric_created"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "recorded_at",
+    "experiment_id",
+    "task_id",
+    "contract_id",
+    "rubric_id",
+    "risk_level",
+    "contract_generation",
+    "contract_size",
+    "requirements",
+    "reuse"
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://akigarage.local/zcode-supervisor/strict-contract/live-evidence-manifest.schema.json",
+  "title": "Strict Contract Live Evidence Manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "benchmark_run_id",
+    "benchmark_run_kind",
+    "task_count",
+    "task_slugs",
+    "provider_models",
+    "operator",
+    "created_at",
+    "approval_status",
+    "claim_family",
+    "strict_result_status",
+    "quality_result_status",
+    "worker_usage",
+    "codex_usage",
+    "total_workflow_savings",
+    "artifact_paths"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "strict_contract_live_evidence_manifest.v1"
+    },
+    "benchmark_run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "benchmark_run_kind": {
+      "enum": ["fixture_ready_plan", "live_provider_benchmark"]
+    },
+    "task_count": {
+      "type": "integer",
+      "minimum": 20
+    },
+    "task_slugs": {
+      "type": "array",
+      "minItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "provider_models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["provider", "model", "status"],
+        "properties": {
+          "provider": {"type": "string"},
+          "model": {"type": "string"},
+          "status": {"type": "string"}
+        }
+      }
+    },
+    "operator": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approval_status": {
+      "enum": ["pending", "approved"]
+    },
+    "approval_reference": {
+      "type": "string"
+    },
+    "claim_family": {
+      "enum": [
+        "direct_orchestrated_delegation_savings",
+        "codex_mediated_delegation_savings"
+      ]
+    },
+    "claim_families": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "direct_orchestrated_delegation_savings",
+          "codex_mediated_delegation_savings"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "strict_result_status": {
+      "enum": ["pass", "fail", "unavailable"]
+    },
+    "quality_result_status": {
+      "enum": ["pass", "fail", "unavailable"]
+    },
+    "worker_usage": {
+      "$ref": "#/$defs/usage_layer"
+    },
+    "codex_usage": {
+      "$ref": "#/$defs/usage_layer"
+    },
+    "total_workflow_savings": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["measured", "blocked"]
+        },
+        "unit": {
+          "enum": ["tokens", null]
+        },
+        "claim_scope": {
+          "enum": [
+            "direct_orchestrated_delegation_savings",
+            "codex_mediated_delegation_savings",
+            null
+          ]
+        },
+        "no_claim_reason": {
+          "type": "string"
+        }
+      }
+    },
+    "artifact_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "production_green_path_enabled": {
+      "type": "boolean"
+    },
+    "direct_mode_default": {
+      "type": "boolean"
+    },
+    "provider_auth_status": {
+      "enum": ["pass", "fail", "not_run"]
+    },
+    "partial_run": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "usage_layer": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["measured", "unavailable"]
+        },
+        "unit": {
+          "enum": ["tokens", null]
+        },
+        "source_path": {
+          "type": ["string", "null"]
+        },
+        "source_type": {
+          "type": "string"
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "no_usage_reason": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -34,7 +34,11 @@ class HomebrewFormulaTests(unittest.TestCase):
         self.assertIn("ref: refs/tags/${{ inputs.tag }}", text)
         self.assertIn('^v[0-9]+\\.[0-9]+\\.[0-9]+$', text)
         self.assertIn('git show-ref --verify --quiet "refs/tags/${TAG}"', text)
-        self.assertIn("actions/attest-build-provenance@v4", text)
+        self.assertIn(
+            "actions/attest-build-provenance@"
+            "0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4",
+            text,
+        )
         self.assertIn("attestations: write", text)
         self.assertIn("contents: write", text)
         self.assertIn("id-token: write", text)
