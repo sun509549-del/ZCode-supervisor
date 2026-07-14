@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -84,14 +85,19 @@ def check_launcher(script: Path | None) -> list[dict[str, Any]]:
         ]
 
     text = script.read_text(encoding="utf-8")
-    export_match = re.search(r"^export ZCODE_PROVIDER_USAGE_LEDGER=(.+/worker-usage\.jsonl)$", text, re.MULTILINE)
+    task_dir = shell_assignment(text, "TASK_DIR")
+    export_value = shell_assignment(text, "ZCODE_PROVIDER_USAGE_LEDGER", exported=True)
     unset_match = re.search(r"^unset (.+)$", text, re.MULTILINE)
     unset_vars = unset_match.group(1).split() if unset_match else []
-    export_path = Path(export_match.group(1)).resolve() if export_match else None
     expected_parent = script.parent.resolve()
+    export_path = None
+    if task_dir and export_value == "$TASK_DIR/worker-usage.jsonl":
+        export_path = Path(task_dir).resolve() / "worker-usage.jsonl"
+    elif export_value:
+        export_path = Path(export_value).resolve()
     return [
         check(
-            export_match is not None and "ZCODE_PROVIDER_USAGE_LEDGER" not in unset_vars,
+            export_value is not None and "ZCODE_PROVIDER_USAGE_LEDGER" not in unset_vars,
             "direct_launcher_exports_row_scoped_provider_ledger",
             "launcher exports ZCODE_PROVIDER_USAGE_LEDGER and does not unset it",
             export_path=str(export_path) if export_path else None,
@@ -110,6 +116,18 @@ def check_launcher(script: Path | None) -> list[dict[str, Any]]:
             "launcher invokes preserve_worker_usage_sidecar after zcodectl run-packet",
         ),
     ]
+
+
+def shell_assignment(text: str, name: str, *, exported: bool = False) -> str | None:
+    prefix = "export " if exported else ""
+    match = re.search(rf"^{prefix}{re.escape(name)}=(.+)$", text, re.MULTILINE)
+    if not match:
+        return None
+    try:
+        values = shlex.split(match.group(1), posix=True)
+    except ValueError:
+        return None
+    return values[0] if len(values) == 1 else None
 
 
 def check_preservation_contract() -> list[dict[str, Any]]:

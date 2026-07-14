@@ -1,4 +1,5 @@
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -16,6 +17,24 @@ def load_gate1_module():
 
 
 class GoalNFinalGate1Tests(unittest.TestCase):
+    def test_launcher_checker_accepts_quoted_task_dir_provider_ledger(self):
+        gate1 = load_gate1_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp) / "row with spaces"
+            task_dir.mkdir()
+            script = task_dir / "run_zcode_launcher.sh"
+            script.write_text(
+                f"TASK_DIR={str(task_dir)!r}\n"
+                'unset ZCODE_WORKER_USAGE_SIDECAR ZCODE_WORKER_USAGE_LEDGER ZCODE_USAGE_LEDGER\n'
+                'export ZCODE_PROVIDER_USAGE_LEDGER="$TASK_DIR/worker-usage.jsonl"\n'
+                '# preserve_worker_usage_sidecar worker_usage_source_path\n',
+                encoding="utf-8",
+            )
+
+            checks = gate1.check_launcher(script)
+
+        self.assertTrue(all(item["ok"] for item in checks), checks)
+
     def test_upstream_emission_fails_without_append_hook(self):
         gate1 = load_gate1_module()
         ok, details = gate1.wrapper_append_configured(
