@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - direct script execution
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STRICT_CONTRACT_DIR = REPO_ROOT / "docs" / "zcode-strict-contract-v3"
-DEFAULT_RUBRIC_DIR = DEFAULT_STRICT_CONTRACT_DIR / "rubrics"
+DEFAULT_RUBRIC_DIR = Path(__file__).resolve().with_name("rubrics")
 DEFAULT_CONTRACT_LEDGER = Path("artifacts/evals/strict-contract-ledger.jsonl")
 DEFAULT_TRACE_LEDGER = Path("artifacts/evals/strict-contract-trace-ledger.jsonl")
 DEFAULT_ACCEPTANCE_LEDGER = Path("artifacts/evals/strict-contract-acceptance-ledger.jsonl")

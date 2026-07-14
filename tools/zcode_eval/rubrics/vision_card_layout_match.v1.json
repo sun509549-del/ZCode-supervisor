@@ -1,0 +1,103 @@
+{
+  "schema_version": "rubric.v1",
+  "rubric_id": "vision_card_layout_match.v1",
+  "rubric_version": 1,
+  "description": "Vision screenshot-to-code card layout contract.",
+  "default_risk_level": "L2",
+  "goal_template": "Match the provided card layout/spec while keeping acceptance thin and avoiding image resend on green path.",
+  "non_goals": [
+    "Do not rewrite unrelated UI",
+    "Do not resend image content to Codex acceptance on green path",
+    "Do not change validation expectations"
+  ],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "must": "UI/card output must satisfy the screenshot-to-code spec.",
+      "verification": "Vision/UI validation passes.",
+      "evidence_required": [
+        "validation_result",
+        "changed_file"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": []
+    },
+    {
+      "id": "REQ-002",
+      "must": "Only allowed files may change.",
+      "verification": "Allowed-files check passes.",
+      "evidence_required": [
+        "changed_file"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": []
+    },
+    {
+      "id": "REQ-003",
+      "must": "Acceptance artifacts must use image hash/manifest rather than resending image content on green path.",
+      "verification": "Context-intake ledger shows no image resend.",
+      "evidence_required": [
+        "manifest"
+      ],
+      "blocking": true,
+      "applies_to_files": [],
+      "negative_checks": [
+        "Do not attach image to Codex acceptance unless anomaly requires it"
+      ]
+    }
+  ],
+  "edge_cases": [
+    {
+      "id": "EDGE-001",
+      "case": "spacing/layout-sensitive card details",
+      "expected": "validation pass and no unrelated layout rewrite",
+      "evidence_required": [
+        "validation_result"
+      ]
+    }
+  ],
+  "forbidden_actions": [
+    "change tests",
+    "edit forbidden files",
+    "resend images to Codex on green path",
+    "rewrite unrelated components"
+  ],
+  "implementation_plan": [
+    {
+      "id": "PLAN-001",
+      "step": "Inspect allowed UI implementation file and provided image/spec input.",
+      "expected_change": "Identify minimal layout/style mismatch.",
+      "max_diff_hint": null
+    },
+    {
+      "id": "PLAN-002",
+      "step": "Apply minimal UI adjustment.",
+      "expected_change": "Small local layout/style code change.",
+      "max_diff_hint": "+15/-15 soft"
+    },
+    {
+      "id": "PLAN-003",
+      "step": "Return image manifest/hash and validation evidence.",
+      "expected_change": "No image content in Codex acceptance green path.",
+      "max_diff_hint": null
+    }
+  ],
+  "expected_diff_budget": {
+    "files_changed_max": 1,
+    "insertions_soft_max": 15,
+    "deletions_soft_max": 15,
+    "if_exceeded": "add_risk_flag_and_explain"
+  },
+  "acceptance_rules": [
+    "All blocking requirements have evidence",
+    "Validation commands pass",
+    "Only allowed files are changed",
+    "No secret/path safety findings",
+    "Diff budget is met or risk-flagged",
+    "No unresolved questions remain on pass",
+    "No image content is sent to Codex acceptance on green path"
+  ],
+  "known_failures": []
+}

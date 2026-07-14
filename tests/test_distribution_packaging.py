@@ -29,7 +29,10 @@ class DistributionPackagingTests(unittest.TestCase):
         self.assertEqual(scripts["zcode-auto-route"], "tools.zcode_supervisor.auto_route:auto_route_entrypoint")
         self.assertEqual(scripts["zcodectl"], "tools.zcode_control:main")
         self.assertEqual(pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_control"], ["*.mjs"])
-        self.assertEqual(pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_eval"], ["fixtures/*.png"])
+        self.assertEqual(
+            pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_eval"],
+            ["fixtures/*.png", "rubrics/*.json"],
+        )
 
     def test_strict_contract_breakdown_import_does_not_require_pillow(self):
         script = """
@@ -57,6 +60,17 @@ print(create_vision_fixture.__name__)
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("create_vision_fixture", result.stdout)
+
+    def test_packaged_rubrics_match_documented_rubrics(self):
+        documented = ROOT / "docs" / "zcode-strict-contract-v3" / "rubrics"
+        packaged = ROOT / "tools" / "zcode_eval" / "rubrics"
+
+        self.assertEqual(
+            [path.name for path in sorted(documented.glob("*.json"))],
+            [path.name for path in sorted(packaged.glob("*.json"))],
+        )
+        for path in documented.glob("*.json"):
+            self.assertEqual(path.read_bytes(), (packaged / path.name).read_bytes(), path.name)
 
     def test_pypi_workflow_uses_trusted_publishing_and_build_only_default(self):
         workflow = (ROOT / ".github/workflows/pypi-publish.yml").read_text(encoding="utf-8")
