@@ -737,6 +737,42 @@ class DirectLauncherTests(unittest.TestCase):
             self.assertEqual(manifest["quality"]["allowed_files_only"], "fail")
             self.assertFalse(manifest["ok"])
 
+    def test_direct_launcher_does_not_embed_untracked_file_contents(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as artifacts:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+            manifest_path = root / "manifest.json"
+            private_content = "private_material_9f7c2d4a_not_for_artifacts"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = main(
+                    [
+                        "run-zcode-direct-launcher",
+                        "--workspace",
+                        str(root),
+                        "--artifact-dir",
+                        artifacts,
+                        "--manifest-out",
+                        str(manifest_path),
+                        "--worktree-mode",
+                        "fixture",
+                        "--allowed",
+                        "notes.txt",
+                        "--",
+                        "python3",
+                        "-c",
+                        f"from pathlib import Path; Path('notes.txt').write_text({private_content!r})",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            diff = Path(manifest["artifacts"]["diff_path"]).read_text(encoding="utf-8")
+            self.assertNotIn(private_content, diff)
+            self.assertIn("untracked metadata: notes.txt", diff)
+            self.assertIn("sha256:", diff)
+            self.assertEqual(manifest["safety"]["untracked_file_content_policy"], "metadata_only")
+
     def test_direct_launcher_scans_staged_diff_content(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as artifacts:
             root = Path(tmp)

@@ -223,14 +223,18 @@ def git_diff_artifacts(cwd: Path) -> dict[str, Any]:
             secret_path_found = True
             complete = False
             continue
-        if path.stat().st_size > MAX_UNTRACKED_SCAN_BYTES:
+        size = path.stat().st_size
+        if size > MAX_UNTRACKED_SCAN_BYTES:
             complete = False
-            continue
-        diff_parts.extend([
-            f"\n--- untracked file: {rel}\n".encode("utf-8"),
-            path.read_bytes(),
-            b"\n",
-        ])
+            digest = "not-scanned"
+        else:
+            data = path.read_bytes()
+            digest = sha256_bytes(data)
+            if scan_secret_bytes(data):
+                secret_path_found = True
+        diff_parts.append(
+            f"\n--- untracked metadata: {rel}\nsize: {size}\nsha256: {digest}\n".encode("utf-8")
+        )
     return {
         "diff": b"".join(diff_parts),
         "stat": b"".join(stat_parts),
@@ -332,6 +336,7 @@ def build_manifest(
             "secret_scan_result": "fail" if secret_failed else "pass",
             "raw_logs_gitignored": raw_logs_gitignored,
             "untrusted_artifact_boundary": True,
+            "untracked_file_content_policy": "metadata_only",
             "budget_guard_hit": bool(budget_reasons),
             "budget_guard_reasons": budget_reasons,
         },
