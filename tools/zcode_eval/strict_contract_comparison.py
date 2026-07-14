@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
 import signal
 import subprocess
@@ -780,16 +781,16 @@ def launcher_script(
     script = task_dir / "run_zcode_launcher.sh"
     packet_args = []
     for expected in task["expected_outputs"]:
-        packet_args.append(f"  --expected-output {json.dumps(expected)} \\")
+        packet_args.append(f"  --expected-output {shlex.quote(expected)} \\")
     for criterion in task["acceptance"]:
-        packet_args.append(f"  --acceptance-criterion {json.dumps(criterion)} \\")
+        packet_args.append(f"  --acceptance-criterion {shlex.quote(criterion)} \\")
 
     vision_args = ""
     run_vision = ""
     if task.get("image"):
         vision_args = "  --vision-image screenshots/target-card.png \\\n  --vision-required \\\n"
         for sample in task.get("vision_color_samples", []):
-            vision_args += f"  --vision-color-sample {json.dumps(sample)} \\\n"
+            vision_args += f"  --vision-color-sample {shlex.quote(sample)} \\\n"
         run_vision = "  --vision-preflight off \\\n"
 
     contract_mode = task.get("contract_mode", "expanded_rubric")
@@ -797,61 +798,64 @@ def launcher_script(
         compact_contract = task_dir / "compact-contract-capsule.json"
         write_json(compact_contract, compact_policy_contract(task))
         strict_args = (
-            f"  --task-contract {compact_contract} \\\n"
-            f"  --task-contract-out {task_dir}/task_contract.json \\"
+            '  --task-contract "$TASK_DIR/compact-contract-capsule.json" \\\n'
+            '  --task-contract-out "$TASK_DIR/task_contract.json" \\'
         )
     else:
         strict_args = (
-            f"  --strict-contract-rubric-id {task['strict_rubric']} \\\n"
-            f"  --strict-contract-task-id {task['slug']} \\\n"
-            f"  --strict-contract-risk-level {task['strict_risk']} \\\n"
-            f"  --task-contract-out {task_dir}/task_contract.json \\"
+            f"  --strict-contract-rubric-id {shlex.quote(task['strict_rubric'])} \\\n"
+            f"  --strict-contract-task-id {shlex.quote(task['slug'])} \\\n"
+            f"  --strict-contract-risk-level {shlex.quote(task['strict_risk'])} \\\n"
+            '  --task-contract-out "$TASK_DIR/task_contract.json" \\'
         )
     accept_validated_artifact_after_ms = 1000 if worker_finalization == "supervisor_owned" else 60000
 
     content = f"""#!/usr/bin/env bash
 set -uo pipefail
-mkdir -p {task_dir}
-printf '%s\\n' {json.dumps(contract_mode)} > {task_dir}/contract-mode.txt
-python3 {REPO_ROOT}/tools/zcode_supervisor/zcode_supervisor.py install-repo --repo {workspace} --skip-vision-mcp > {task_dir}/install.json 2> {task_dir}/install.stderr.log
-printf '%s\\n' "$?" > {task_dir}/install.rc
+REPO_ROOT={shlex.quote(str(REPO_ROOT))}
+WORKSPACE={shlex.quote(str(workspace))}
+TASK_DIR={shlex.quote(str(task_dir))}
+mkdir -p "$TASK_DIR"
+printf '%s\\n' {shlex.quote(contract_mode)} > "$TASK_DIR/contract-mode.txt"
+python3 "$REPO_ROOT/tools/zcode_supervisor/zcode_supervisor.py" install-repo --repo "$WORKSPACE" --skip-vision-mcp > "$TASK_DIR/install.json" 2> "$TASK_DIR/install.stderr.log"
+printf '%s\\n' "$?" > "$TASK_DIR/install.rc"
 
-python3 {REPO_ROOT}/tools/zcode_supervisor/zcode_supervisor.py packet \\
-  --workspace {workspace} \\
-  --objective {json.dumps(task["objective"])} \\
-  --allowed {task["allowed"]} \\
+python3 "$REPO_ROOT/tools/zcode_supervisor/zcode_supervisor.py" packet \\
+  --workspace "$WORKSPACE" \\
+  --objective {shlex.quote(task["objective"])} \\
+  --allowed {shlex.quote(task["allowed"])} \\
   --forbidden test \\
   --forbidden README.md \\
   --forbidden package.json \\
   --forbidden validate.mjs \\
-  --validation {json.dumps(task["validation"])} \\
+  --validation {shlex.quote(task["validation"])} \\
   --mode "Auto Edit" \\
   --workspace-kind fixture \\
   --effort max \\
-  --task-class {task["task_class"]} \\
+  --task-class {shlex.quote(task["task_class"])} \\
   --risk-budget low \\
   --max-changed-files 1 \\
-  --worker-finalization {worker_finalization} \\
+  --worker-finalization {shlex.quote(worker_finalization)} \\
 {strict_args}
 {vision_args}{os.linesep.join(packet_args)}
-  --what-not-to-do {json.dumps(task["what_not_to_do"])} \\
+  --what-not-to-do {shlex.quote(task["what_not_to_do"])} \\
   --final-report-line "Changed files" \\
   --final-report-line "Validation result" \\
-  --out {task_dir}/packet.json \\
-  --prompt-out {task_dir}/packet.prompt.txt \\
-  > {task_dir}/packet.stdout.log 2> {task_dir}/packet.stderr.log
-printf '%s\\n' "$?" > {task_dir}/packet.rc
+  --out "$TASK_DIR/packet.json" \\
+  --prompt-out "$TASK_DIR/packet.prompt.txt" \\
+  > "$TASK_DIR/packet.stdout.log" 2> "$TASK_DIR/packet.stderr.log"
+printf '%s\\n' "$?" > "$TASK_DIR/packet.rc"
 
 unset ZCODE_WORKER_USAGE_SIDECAR ZCODE_WORKER_USAGE_LEDGER ZCODE_USAGE_LEDGER
-export ZCODE_PROVIDER_USAGE_LEDGER={task_dir}/worker-usage.jsonl
+export ZCODE_PROVIDER_USAGE_LEDGER="$TASK_DIR/worker-usage.jsonl"
 
-python3 {REPO_ROOT}/tools/zcode_eval/zcode_model_usage_db_delta.py before \\
-  --out {task_dir}/{ZCODE_MODEL_USAGE_DB_DELTA_BEFORE} \\
-  > {task_dir}/zcode-model-usage-before.stdout.log 2> {task_dir}/zcode-model-usage-before.stderr.log
-printf '%s\\n' "$?" > {task_dir}/zcode-model-usage-before.rc
+python3 "$REPO_ROOT/tools/zcode_eval/zcode_model_usage_db_delta.py" before \\
+  --out "$TASK_DIR/{ZCODE_MODEL_USAGE_DB_DELTA_BEFORE}" \\
+  > "$TASK_DIR/zcode-model-usage-before.stdout.log" 2> "$TASK_DIR/zcode-model-usage-before.stderr.log"
+printf '%s\\n' "$?" > "$TASK_DIR/zcode-model-usage-before.rc"
 
-node {REPO_ROOT}/tools/zcode_control/zcodectl.mjs run-packet \\
-  --packet {task_dir}/packet.json \\
+node "$REPO_ROOT/tools/zcode_control/zcodectl.mjs" run-packet \\
+  --packet "$TASK_DIR/packet.json" \\
   --mode edit \\
   --max-attempts 1 \\
   --retry-delay-ms 60000 \\
@@ -861,18 +865,18 @@ node {REPO_ROOT}/tools/zcode_control/zcodectl.mjs run-packet \\
   --no-repair-validation \\
   --accept-validated-artifact-after-ms {accept_validated_artifact_after_ms} \\
 {run_vision}  --json \\
-  --out {task_dir}/zcode-run.json \\
-  > {task_dir}/route.json 2> {task_dir}/route.stderr.log
-printf '%s\\n' "$?" > {task_dir}/route.rc
-printf '%s\\n' {task_dir}/zcode-run.json > {task_dir}/run-json-path.txt
+  --out "$TASK_DIR/zcode-run.json" \\
+  > "$TASK_DIR/route.json" 2> "$TASK_DIR/route.stderr.log"
+printf '%s\\n' "$?" > "$TASK_DIR/route.rc"
+printf '%s\\n' "$TASK_DIR/zcode-run.json" > "$TASK_DIR/run-json-path.txt"
 
-python3 {REPO_ROOT}/tools/zcode_eval/zcode_model_usage_db_delta.py after \\
-  --before {task_dir}/{ZCODE_MODEL_USAGE_DB_DELTA_BEFORE} \\
-  --ledger {task_dir}/worker-usage.jsonl \\
-  --row-dir {task_dir} \\
-  --out {task_dir}/{ZCODE_MODEL_USAGE_DB_DELTA_AFTER} \\
-  > {task_dir}/zcode-model-usage-delta.stdout.log 2> {task_dir}/zcode-model-usage-delta.stderr.log
-printf '%s\\n' "$?" > {task_dir}/zcode-model-usage-delta.rc
+python3 "$REPO_ROOT/tools/zcode_eval/zcode_model_usage_db_delta.py" after \\
+  --before "$TASK_DIR/{ZCODE_MODEL_USAGE_DB_DELTA_BEFORE}" \\
+  --ledger "$TASK_DIR/worker-usage.jsonl" \\
+  --row-dir "$TASK_DIR" \\
+  --out "$TASK_DIR/{ZCODE_MODEL_USAGE_DB_DELTA_AFTER}" \\
+  > "$TASK_DIR/zcode-model-usage-delta.stdout.log" 2> "$TASK_DIR/zcode-model-usage-delta.stderr.log"
+printf '%s\\n' "$?" > "$TASK_DIR/zcode-model-usage-delta.rc"
 
 # Worker usage sidecar hook:
 # - This launcher exports ZCODE_PROVIDER_USAGE_LEDGER to a row-scoped
@@ -896,16 +900,16 @@ sys.path.insert(0, {json.dumps(str(REPO_ROOT))})
 from tools.zcode_eval.strict_contract_comparison import preserve_worker_usage_sidecar
 preserve_worker_usage_sidecar(Path({json.dumps(str(task_dir / "zcode-run.json"))}))
 PY
-printf '%s\\n' "$?" > {task_dir}/worker-usage-sidecar.rc
+printf '%s\\n' "$?" > "$TASK_DIR/worker-usage-sidecar.rc"
 
-python3 {REPO_ROOT}/tools/zcode_eval/zcode_eval.py accept-zcode-artifact \\
-  --zcode-run-json {task_dir}/zcode-run.json \\
-  --label {task["slug"]} \\
-  > {task_dir}/acceptance.json 2> {task_dir}/acceptance.stderr.log
-printf '%s\\n' "$?" > {task_dir}/acceptance.rc
+python3 "$REPO_ROOT/tools/zcode_eval/zcode_eval.py" accept-zcode-artifact \\
+  --zcode-run-json "$TASK_DIR/zcode-run.json" \\
+  --label {shlex.quote(task["slug"])} \\
+  > "$TASK_DIR/acceptance.json" 2> "$TASK_DIR/acceptance.stderr.log"
+printf '%s\\n' "$?" > "$TASK_DIR/acceptance.rc"
 
-(cd {workspace} && {task["validation"]}) > {task_dir}/final-validation.log 2>&1
-printf '%s\\n' "$?" > {task_dir}/final-validation.rc
+(cd "$WORKSPACE" && {task["validation"]}) > "$TASK_DIR/final-validation.log" 2>&1
+printf '%s\\n' "$?" > "$TASK_DIR/final-validation.rc"
 """
     write_text(script, content)
     script.chmod(0o755)

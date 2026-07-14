@@ -151,8 +151,8 @@ class StrictContractComparisonHarnessTests(unittest.TestCase):
 
             self.assertIn("--task-class small-fix", text)
             self.assertIn("--timeout-ms 600000", text)
-            self.assertIn('--vision-color-sample "accentColor=screenshots/target-card.png@100,80"', text)
-            self.assertIn('--vision-color-sample "statusColor=screenshots/target-card.png@124,162"', text)
+            self.assertIn('--vision-color-sample accentColor=screenshots/target-card.png@100,80', text)
+            self.assertIn('--vision-color-sample statusColor=screenshots/target-card.png@124,162', text)
             self.assertIn("--vision-preflight off", text)
             self.assertIn("Do not compensate for unavailable local validation", text)
             self.assertIn("unset ZCODE_WORKER_USAGE_SIDECAR ZCODE_WORKER_USAGE_LEDGER ZCODE_USAGE_LEDGER", text)
@@ -175,6 +175,30 @@ class StrictContractComparisonHarnessTests(unittest.TestCase):
             self.assertEqual(contract["schema_version"], "task_contract.v1")
             self.assertEqual(contract["task_id"], "policy-reason-contract")
             self.assertLess(len(json.dumps(compact_policy_contract(policy))), 3000)
+
+    def test_launcher_script_shell_quotes_report_and_workspace_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report with spaces;safe"
+            policy = next(task for task in task_specs(report) if task["slug"] == "policy-reason-contract")
+            workspace = report / "workspace $(safe)"
+            task_dir = report / "task 'quoted'"
+            workspace.mkdir(parents=True)
+
+            script = launcher_script(policy, workspace, task_dir)
+            result = subprocess.run(
+                ["bash", "-n", str(script)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            text = script.read_text(encoding="utf-8")
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn("WORKSPACE='", text)
+            self.assertIn("TASK_DIR='", text)
+            self.assertIn('mkdir -p "$TASK_DIR"', text)
+            self.assertIn('(cd "$WORKSPACE" && npm test)', text)
 
     def test_task_plan_is_json_serializable(self):
         with tempfile.TemporaryDirectory() as tmp:
