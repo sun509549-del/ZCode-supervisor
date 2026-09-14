@@ -1,13 +1,23 @@
 import json
 import contextlib
 import io
+import os
 import struct
+import sys
 import tempfile
 import unittest
 import zlib
 from pathlib import Path
 
-from tools.zcode_supervisor.zcode_supervisor import classify_provider_error, classify_provider_run_state, main
+from tools.zcode_supervisor.zcode_supervisor import (
+    classify_provider_error,
+    classify_provider_run_state,
+    main,
+    run_validation,
+)
+
+SUCCESS_VALIDATION = f'"{sys.executable}" -c "print(42)"'
+FAILURE_VALIDATION = f'"{sys.executable}" -c "raise SystemExit(3)"'
 
 
 class ZCodeSupervisorTests(unittest.TestCase):
@@ -16,6 +26,74 @@ class ZCodeSupervisorTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             exit_code = main(argv)
         return exit_code, json.loads(output.getvalue())
+
+    @unittest.skipUnless(os.name == "nt", "Windows command-line parsing regression")
+    def test_validation_preserves_windows_backslash_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "tests").mkdir()
+            (workspace / "tests/check.py").write_text("print('ok')\n", encoding="utf-8")
+
+            result = run_validation(
+                workspace,
+                f'"{sys.executable}" tests\\check.py',
+                5,
+            )
+
+            self.assertTrue(result["ok"], result)
+
+    def test_audit_detects_changes_to_secret_and_large_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            (workspace / "src").mkdir(parents=True)
+            (workspace / "src/app.js").write_text("before\n", encoding="utf-8")
+            (workspace / ".env").write_text("SECRET=before\n", encoding="utf-8")
+            (workspace / "large.bin").write_bytes(b"A" * 1_100_000)
+            packet = root / "packet.json"
+            packet.write_text(
+                json.dumps(
+                    {
+                        "workspace": str(workspace),
+                        "allowed_files": ["src/app.js"],
+                        "forbidden_files": [".env", "large.bin"],
+                        "validation": f'"{sys.executable}" -c "raise SystemExit(0)"',
+                        "max_changed_files": 1,
+                        "acceptance_criteria": [],
+                        "expected_outputs": [],
+                        "required_final_report_shape": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            snapshot = root / "snapshot.json"
+            self.assertEqual(
+                main(["snapshot", "--workspace", str(workspace), "--out", str(snapshot)]),
+                0,
+            )
+
+            (workspace / "src/app.js").write_text("after\n", encoding="utf-8")
+            (workspace / ".env").write_text("SECRET=after\n", encoding="utf-8")
+            (workspace / "large.bin").write_bytes(b"B" * 1_100_000)
+
+            exit_code, result = self._main_json(
+                [
+                    "audit",
+                    "--workspace",
+                    str(workspace),
+                    "--snapshot",
+                    str(snapshot),
+                    "--packet",
+                    str(packet),
+                ]
+            )
+
+            self.assertEqual(exit_code, 1)
+            changed = set(result["changed_files"]["modified"])
+            self.assertEqual(changed, {".env", "large.bin", "src/app.js"})
+            violation_types = {item["type"] for item in result["violations"]}
+            self.assertIn("outside_allowed_files", violation_types)
+            self.assertIn("forbidden_files_changed", violation_types)
 
     def test_provider_error_classifier_extracts_zcode_overload(self):
         stderr = (
@@ -109,7 +187,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--forbidden",
                         "README.md",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--out",
                         str(packet),
                     ]
@@ -141,7 +219,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--out",
                         str(packet),
                     ]
@@ -180,7 +258,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--out",
                         str(packet),
                     ]
@@ -220,7 +298,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--forbidden",
                         "README.md",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--out",
                         str(packet),
                     ]
@@ -254,7 +332,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "README.md",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--max-changed-files",
                         "1",
                         "--out",
@@ -288,7 +366,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'import sys; sys.exit(3)'",
+                        FAILURE_VALIDATION,
                         "--out",
                         str(packet),
                     ]
@@ -320,7 +398,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--out",
                         str(packet),
                     ]
@@ -354,7 +432,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--out",
                         str(packet),
                     ]
@@ -384,7 +462,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--goal",
                         "--out",
                         str(packet),
@@ -417,7 +495,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--forbidden",
                         "README.md",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--expected-output",
                         "src/app.js exports the corrected value",
                         "--acceptance-criterion",
@@ -439,7 +517,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
             self.assertEqual(payload["acceptance_criteria"], ["Codex audit reports artifact_quality=pass"])
             self.assertIn("Do not add dependencies", payload["what_not_to_do"])
             self.assertEqual(payload["required_final_report_shape"], ["Changed files"])
-            self.assertEqual(payload["validation_commands"], ["python3 -c 'print(42)'"])
+            self.assertEqual(payload["validation_commands"], [SUCCESS_VALIDATION])
             self.assertEqual(payload["artifact_review_contract"]["codex_repair_size_values"], [
                 "none",
                 "small polish",
@@ -465,7 +543,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                     "--allowed",
                     "src/app.js",
                     "--validation",
-                    "python3 -c 'print(42)'",
+                    SUCCESS_VALIDATION,
                     "--strict-contract-rubric-id",
                     "billing_cent_rounding.v1",
                     "--strict-contract-task-id",
@@ -510,7 +588,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--effort",
                         "max",
                         "--task-class",
@@ -546,7 +624,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--vision-image",
                         "screenshots/state.png",
                         "--out",
@@ -591,7 +669,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--vision-color-sample",
                         "primary=screenshots/state.png@1,1",
                         "--out",
@@ -626,7 +704,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                     "--allowed",
                     "src/app.js",
                     "--validation",
-                    "python3 -c 'print(42)'",
+                    SUCCESS_VALIDATION,
                     "--vision-color-sample",
                     "primary=screenshots/state.png@9,0",
                     "--out",
@@ -655,7 +733,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                     "--allowed",
                     "src/app.js",
                     "--validation",
-                    "python3 -c 'print(42)'",
+                    SUCCESS_VALIDATION,
                     "--vision-color-sample",
                     "primary=screenshots/huge.png@0,0",
                     "--out",
@@ -690,7 +768,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                     "--allowed",
                     "src/app.js",
                     "--validation",
-                    "python3 -c 'print(42)'",
+                    SUCCESS_VALIDATION,
                     "--vision-color-sample",
                     "primary=screenshots/broken.png@0,0",
                     "--out",
@@ -716,7 +794,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                     "--allowed",
                     "src/app.js",
                     "--validation",
-                    "python3 -c 'print(42)'",
+                    SUCCESS_VALIDATION,
                     "--vision-image",
                     "screenshots/missing.png",
                     "--out",
@@ -742,7 +820,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                     "--allowed",
                     "src/app.js",
                     "--validation",
-                    "python3 -c 'print(42)'",
+                    SUCCESS_VALIDATION,
                     "--mode",
                     "Full Access",
                     "--out",
@@ -769,7 +847,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--mode",
                         "Full Access",
                         "--workspace-kind",
@@ -825,7 +903,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--expected-output",
                         "src/app.js contains value 2",
                         "--acceptance-criterion",
@@ -932,7 +1010,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
                         "--allowed",
                         "src/app.js",
                         "--validation",
-                        "python3 -c 'print(42)'",
+                        SUCCESS_VALIDATION,
                         "--strict-contract-rubric-id",
                         "billing_cent_rounding.v1",
                         "--strict-contract-task-id",

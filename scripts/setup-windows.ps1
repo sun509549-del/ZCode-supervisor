@@ -71,9 +71,12 @@ if ($LASTEXITCODE -ne 0 -or -not $gitRoot) {
 }
 $resolvedRepo = (Resolve-Path -LiteralPath $gitRoot).Path
 
-$profiles = @(Get-ZCodeProfiles -Controller $controllerPath)
-if ($profiles.Count -eq 0) {
-    throw "ZCode Desktop has no API profile with both a credential and at least one model."
+$profiles = @()
+if ($ListApis -or -not $SkipCliBootstrap) {
+    $profiles = @(Get-ZCodeProfiles -Controller $controllerPath)
+    if ($profiles.Count -eq 0) {
+        throw "ZCode Desktop has no API profile with both a credential and at least one model."
+    }
 }
 
 if ($ListApis) {

@@ -12,6 +12,8 @@ const ROOT = resolve(import.meta.dirname, "..");
 const ZCODECTL = resolve(ROOT, "tools", "zcode_control", "zcodectl.mjs");
 const SUPERVISOR = resolve(ROOT, "tools", "zcode_supervisor", "zcode_supervisor.py");
 const execFile = promisify(execFileCallback);
+const PYTHON = process.env.ZCODE_SUPERVISOR_PYTHON || (process.platform === "win32" ? "python" : "python3");
+const PYTHON_VALIDATION = process.platform === "win32" ? "python check.py" : "python3 check.py";
 const GIT_CONTROL_ENV_VARS = [
   "GIT_DIR",
   "GIT_WORK_TREE",
@@ -54,7 +56,7 @@ async function makeWorkspace(initialText, validationText, options = {}) {
     "--allowed",
     "src/app.js",
     "--validation",
-    "python3 check.py",
+    PYTHON_VALIDATION,
     "--out",
     packet,
   ];
@@ -68,7 +70,7 @@ async function makeWorkspace(initialText, validationText, options = {}) {
       "billing-credit-contract",
     );
   }
-  await execFile("python3", packetArgs);
+  await execFile(PYTHON, packetArgs);
   return { root, workspace, packet };
 }
 
@@ -81,7 +83,7 @@ async function writeFakeCli(root, source, name = "fake-zcode.cjs") {
 
 async function makeModelUsageDb(root) {
   const db = join(root, "model-usage.sqlite");
-  await execFile("python3", [
+  await execFile(PYTHON, [
     "-c",
     [
       "import sqlite3, sys",
@@ -557,7 +559,7 @@ const { execFileSync } = require('node:child_process');
 const cwdIndex = process.argv.indexOf('--cwd');
 const cwd = cwdIndex >= 0 ? process.argv[cwdIndex + 1] : process.cwd();
 fs.writeFileSync(path.join(cwd, 'src/app.js'), 'after\\n');
-execFileSync('python3', ['-c', [
+execFileSync(process.platform === 'win32' ? 'python' : 'python3', ['-c', [
   'import sqlite3, sys, time',
   'db=sys.argv[1]',
   'now=int(time.time()*1000)',

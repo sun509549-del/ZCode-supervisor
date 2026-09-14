@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
+import os
 import re
 import shlex
 import struct
@@ -98,6 +100,8 @@ DEFAULT_STRICT_SELF_AUDIT_PATH = ".codex/zcode/runs/zcode_self_audit.json"
 class Snapshot:
     workspace: Path
     files: dict[str, dict[str, Any]]
+    secret_files: list[str]
+    large_files: list[str]
     skipped_secret_files: list[str]
     skipped_large_files: list[str]
 
@@ -296,9 +300,27 @@ def non_negative_int(raw: str) -> int:
     return value
 
 
+def split_command_line(command: str) -> list[str]:
+    if os.name != "nt":
+        return shlex.split(command)
+    if not command.strip():
+        return []
+    argc = ctypes.c_int()
+    command_line_to_argv = ctypes.windll.shell32.CommandLineToArgvW
+    command_line_to_argv.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
+    command_line_to_argv.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    argv = command_line_to_argv(command, ctypes.byref(argc))
+    if not argv:
+        raise ValueError(f"could not parse Windows command line: {ctypes.WinError()}")
+    try:
+        return [argv[index] for index in range(argc.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)
+
+
 def validation_danger_reason(command: str) -> str | None:
     try:
-        argv = shlex.split(command)
+        argv = split_command_line(command)
     except ValueError as exc:
         return f"invalid validation command: {exc}"
     if not argv:
@@ -666,21 +688,19 @@ def hash_file(path: Path) -> str:
 
 def build_snapshot(workspace: Path) -> Snapshot:
     files: dict[str, dict[str, Any]] = {}
-    skipped_secret_files: list[str] = []
-    skipped_large_files: list[str] = []
+    secret_files: list[str] = []
+    large_files: list[str] = []
     for path in sorted(workspace.rglob("*")):
         if not path.is_file() or should_skip(path.relative_to(workspace)):
             continue
         rel = path.relative_to(workspace).as_posix()
         if is_secret_path(Path(rel)):
-            skipped_secret_files.append(rel)
-            continue
+            secret_files.append(rel)
         size = path.stat().st_size
         if size > MAX_HASH_BYTES:
-            skipped_large_files.append(rel)
-            continue
+            large_files.append(rel)
         files[rel] = {"sha256": hash_file(path), "size": size}
-    return Snapshot(workspace, files, skipped_secret_files, skipped_large_files)
+    return Snapshot(workspace, files, secret_files, large_files, [], [])
 
 
 def snapshot_command(args: argparse.Namespace) -> int:
@@ -693,6 +713,8 @@ def snapshot_command(args: argparse.Namespace) -> int:
         "created_at": utc_now(),
         "workspace": str(snapshot.workspace),
         "files": snapshot.files,
+        "secret_files": snapshot.secret_files,
+        "large_files": snapshot.large_files,
         "skipped_secret_files": snapshot.skipped_secret_files,
         "skipped_large_files": snapshot.skipped_large_files,
     }
@@ -728,7 +750,7 @@ def scan_changed_files(workspace: Path, changed: list[str]) -> list[dict[str, st
 
 def run_validation(workspace: Path, command: str, timeout: int) -> dict[str, Any]:
     try:
-        argv = shlex.split(command)
+        argv = split_command_line(command)
     except ValueError as exc:
         return {"ok": False, "returncode": 127, "error": f"invalid validation command: {exc}"}
     if not argv:
@@ -738,6 +760,8 @@ def run_validation(workspace: Path, command: str, timeout: int) -> dict[str, Any
             argv,
             cwd=workspace,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
             check=False,
@@ -1108,6 +1132,8 @@ def audit_command(args: argparse.Namespace) -> int:
             item["id"] for item in checklist if item["status"] == "codex_review_required"
         ],
         "violations": violations,
+        "secret_files": after_snapshot.secret_files,
+        "large_files": after_snapshot.large_files,
         "skipped_secret_files": after_snapshot.skipped_secret_files,
         "skipped_large_files": after_snapshot.skipped_large_files,
     }

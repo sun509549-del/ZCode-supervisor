@@ -21,7 +21,7 @@ param(
     [ValidateRange(1, 3)]
     [int]$MaxAttempts = 1,
     [ValidateRange(0, 7200000)]
-    [int]$AcceptValidatedArtifactAfterMs = 60000,
+    [int]$AcceptValidatedArtifactAfterMs = 0,
     [ValidateRange(1000, 7200000)]
     [int]$TimeoutMs = 600000
 )

@@ -12,6 +12,8 @@ const ROOT = resolve(import.meta.dirname, "..");
 const ZCODECTL = resolve(ROOT, "tools", "zcode_control", "zcodectl.mjs");
 const SUPERVISOR = resolve(ROOT, "tools", "zcode_supervisor", "zcode_supervisor.py");
 const execFile = promisify(execFileCallback);
+const PYTHON = process.env.ZCODE_SUPERVISOR_PYTHON || (process.platform === "win32" ? "python" : "python3");
+const PYTHON_VALIDATION = process.platform === "win32" ? "python check.py" : "python3 check.py";
 
 async function makeWorkspace(initialText, validationText) {
   const root = await mkdtemp(join(tmpdir(), "zcode-app-runner-cdp-"));
@@ -27,7 +29,7 @@ async function makeWorkspace(initialText, validationText) {
     ].join("\n"),
   );
   const packet = join(root, "packet.json");
-  await execFile("python3", [
+  await execFile(PYTHON, [
     SUPERVISOR,
     "packet",
     "--workspace",
@@ -37,7 +39,7 @@ async function makeWorkspace(initialText, validationText) {
     "--allowed",
     "src/app.js",
     "--validation",
-    "python3 check.py",
+    PYTHON_VALIDATION,
     "--worker-finalization",
     "supervisor_owned",
     "--max-changed-files",
@@ -93,7 +95,7 @@ async function pathExists(path) {
 }
 
 async function createModelUsageDb(db) {
-  await execFile("python3", [
+  await execFile(PYTHON, [
     "-c",
     [
       "import sqlite3, sys",
@@ -110,7 +112,7 @@ async function createModelUsageDb(db) {
 }
 
 async function insertModelUsage(db, fields = {}) {
-  await execFile("python3", [
+  await execFile(PYTHON, [
     "-c",
     [
       "import json, sqlite3, sys, time",

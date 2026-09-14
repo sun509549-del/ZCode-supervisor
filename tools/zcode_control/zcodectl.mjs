@@ -54,6 +54,8 @@ const GIT_CONTROL_ENV_VARS = [
   "GIT_NAMESPACE",
   "GIT_CEILING_DIRECTORIES",
 ];
+const SENSITIVE_CHILD_ENV_PATTERN = /(?:^|_)(?:API_?KEY|ACCESS_?KEY(?:_ID)?|PRIVATE_?KEY|CLIENT_?SECRET|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|COOKIE|SESSION)(?:$|_)/i;
+const SENSITIVE_CHILD_ENV_NAMES = new Set(["SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS"]);
 
 function usage() {
   console.log(`zcodectl
@@ -206,9 +208,14 @@ function isRecord(value) {
 }
 
 function sanitizeChildEnv(baseEnv = process.env, extraEnv = {}) {
-  const env = { ...baseEnv, ...extraEnv };
+  const env = { ...baseEnv };
   for (const name of GIT_CONTROL_ENV_VARS) delete env[name];
-  return env;
+  for (const name of Object.keys(env)) {
+    if (SENSITIVE_CHILD_ENV_PATTERN.test(name) || SENSITIVE_CHILD_ENV_NAMES.has(name.toUpperCase())) {
+      delete env[name];
+    }
+  }
+  return { ...env, ...extraEnv };
 }
 
 async function readJsonFile(path) {
@@ -409,7 +416,12 @@ async function runZcodeCliWithValidatedArtifactAccept(cliPath, cliArgs, options 
       if (!(acceptAfterMs > 0) || !options.auditValidatedArtifact) return;
       try {
         const audit = await options.auditValidatedArtifact();
-        if (audit?.ok === true && audit?.validation?.ok === true) {
+        if (
+          audit?.ok === true &&
+          audit?.validation?.ok === true &&
+          Number.isInteger(audit?.changed_count) &&
+          audit.changed_count > 0
+        ) {
           settled = true;
           acceptedAudit = audit;
           stopChild();
@@ -739,18 +751,20 @@ function normalizeModelId(model) {
 
 function sourceProviderCandidates(providerId, guiConfig) {
   const providers = isRecord(guiConfig.provider) ? guiConfig.provider : {};
-  if (isRecord(providers[providerId])) return [providerId];
+  const direct = isRecord(providers[providerId]) ? [providerId] : [];
   if (providerId === "zai") {
-    return ["builtin:zai-coding-plan", "builtin:zai", "builtin:zai-start-plan"];
+    return [...direct, "builtin:zai-coding-plan", "builtin:zai", "builtin:zai-start-plan"];
   }
   if (providerId === "bigmodel") {
-    return ["builtin:bigmodel-coding-plan", "builtin:bigmodel", "builtin:bigmodel-start-plan"];
+    return [...direct, "builtin:bigmodel-coding-plan", "builtin:bigmodel", "builtin:bigmodel-start-plan"];
   }
-  return [providerId];
+  return direct.length > 0 ? direct : [providerId];
 }
 
 function displayProviderName(providerId) {
-  return providerId === "bigmodel" ? "Bigmodel Coding Plan" : "Z.AI Coding Plan";
+  if (providerId === "bigmodel") return "Bigmodel Coding Plan";
+  if (providerId === "zai") return "Z.AI Coding Plan";
+  return providerId;
 }
 
 function fallbackProviderBaseUrl(providerId) {
@@ -759,17 +773,23 @@ function fallbackProviderBaseUrl(providerId) {
   return null;
 }
 
-function pickSourceProvider(guiConfig, providerId) {
+function pickSourceProvider(guiConfig, providerId, requestedModel = null) {
   const providers = isRecord(guiConfig.provider) ? guiConfig.provider : {};
+  const requestedModelId = requestedModel ? normalizeModelId(requestedModel) : null;
   for (const id of sourceProviderCandidates(providerId, guiConfig)) {
     const provider = providers[id];
     if (!isRecord(provider)) continue;
     const options = isRecord(provider.options) ? provider.options : {};
     const apiKey = typeof options.apiKey === "string" ? options.apiKey.trim() : "";
     if (!apiKey) continue;
+    const modelIds = Object.keys(isRecord(provider.models) ? provider.models : {});
+    if (modelIds.length === 0) continue;
+    if (requestedModelId && !modelIds.some((modelId) => normalizeModelId(modelId) === requestedModelId)) {
+      continue;
+    }
     return { id, provider, options, apiKey };
   }
-  throw new Error(`No API key found for ZCode provider: ${providerId}`);
+  throw new Error(`No usable API profile found for ZCode provider: ${providerId}`);
 }
 
 function apiProfileRows(guiConfig) {
@@ -804,11 +824,15 @@ async function apiProfiles(args) {
   }, args.out);
 }
 
-function normalizedSourceModelIds(sourceProvider, preferredModels) {
+function sourceModelIds(sourceProvider, preferredModels) {
   const sourceModels = isRecord(sourceProvider.models) ? sourceProvider.models : {};
-  const ids = new Set(preferredModels.map(normalizeModelId));
-  for (const model of Object.keys(sourceModels)) ids.add(normalizeModelId(model));
-  return [...ids];
+  const ids = new Map();
+  for (const model of [...preferredModels, ...Object.keys(sourceModels)]) {
+    const exact = String(model ?? "").trim();
+    const normalized = exact ? normalizeModelId(exact) : null;
+    if (normalized && !ids.has(normalized)) ids.set(normalized, exact);
+  }
+  return [...ids.values()];
 }
 
 function modelDisplayName(modelId) {
@@ -825,7 +849,7 @@ async function bootstrapCliConfig(args) {
   const existedBefore = await pathExists(cliConfigPath);
   const guiConfig = await readJsonFile(sourceConfigPath);
   if (!isRecord(guiConfig)) throw new Error(`GUI config must be a JSON object: ${sourceConfigPath}`);
-  const source = pickSourceProvider(guiConfig, providerId);
+  const source = pickSourceProvider(guiConfig, providerId, args.model);
   const availableModelIds = Object.keys(isRecord(source.provider.models) ? source.provider.models : {});
   const requestedModelId = normalizeModelId(args.model ?? availableModelIds[0] ?? "glm-5.3");
   const availableByNormalizedId = new Map(
@@ -834,7 +858,7 @@ async function bootstrapCliConfig(args) {
   if (!availableByNormalizedId.has(requestedModelId)) {
     throw new Error(`Model ${args.model} is not configured for ZCode provider ${source.id}`);
   }
-  const mainModelId = normalizeModelId(availableByNormalizedId.get(requestedModelId));
+  const mainModelId = availableByNormalizedId.get(requestedModelId);
   const targetProviderId = providerId === "zai" || providerId === "bigmodel" ? providerId : source.id;
   const existing = await readJsonFileOrEmpty(cliConfigPath);
   const providerConfig = isRecord(existing.provider) ? existing.provider : {};
@@ -845,20 +869,34 @@ async function bootstrapCliConfig(args) {
     ? source.options.baseURL.trim()
     : fallbackProviderBaseUrl(providerId);
   if (!sourceBaseUrl) throw new Error(`No base URL found for ZCode provider: ${source.id}`);
-  const sourceModelIds = normalizedSourceModelIds(source.provider, [mainModelId]);
-  const liteModelId = args.liteModel
-    ? normalizeModelId(args.liteModel)
-    : sourceModelIds.includes("glm-5-turbo")
-      ? "glm-5-turbo"
+  const configuredModelIds = sourceModelIds(source.provider, [mainModelId]);
+  const configuredByNormalizedId = new Map(
+    configuredModelIds.map((modelId) => [normalizeModelId(modelId), modelId]),
+  );
+  const requestedLiteModelId = args.liteModel ? normalizeModelId(args.liteModel) : null;
+  if (requestedLiteModelId && !configuredByNormalizedId.has(requestedLiteModelId)) {
+    throw new Error(`Lite model ${args.liteModel} is not configured for ZCode provider ${source.id}`);
+  }
+  const liteModelId = requestedLiteModelId
+    ? configuredByNormalizedId.get(requestedLiteModelId)
+    : configuredByNormalizedId.has("glm-5-turbo")
+      ? configuredByNormalizedId.get("glm-5-turbo")
       : null;
-  const preferredModelIds = liteModelId ? [mainModelId, liteModelId, ...sourceModelIds] : [mainModelId, ...sourceModelIds];
-  const modelIds = [...new Set(preferredModelIds)];
+  const modelIds = sourceModelIds(source.provider, liteModelId ? [mainModelId, liteModelId] : [mainModelId]);
   const models = { ...existingModels };
+  const sourceModels = isRecord(source.provider.models) ? source.provider.models : {};
+  const sourceModelsByNormalizedId = new Map(
+    Object.entries(sourceModels).map(([modelId, value]) => [normalizeModelId(modelId), value]),
+  );
   for (const modelId of modelIds) {
+    const sourceModel = sourceModelsByNormalizedId.get(normalizeModelId(modelId));
     models[modelId] = {
       ...(isRecord(models[modelId]) ? models[modelId] : {}),
-      name: isRecord(models[modelId]) && typeof models[modelId].name === "string"
-        ? models[modelId].name
+      ...(isRecord(sourceModel) ? sourceModel : {}),
+      name: isRecord(sourceModel) && typeof sourceModel.name === "string"
+        ? sourceModel.name
+        : isRecord(models[modelId]) && typeof models[modelId].name === "string"
+          ? models[modelId].name
         : modelDisplayName(modelId),
     };
   }
@@ -876,7 +914,8 @@ async function bootstrapCliConfig(args) {
         name: typeof source.provider.name === "string" ? source.provider.name : displayProviderName(targetProviderId),
         options: {
           ...existingOptions,
-          apiKeyRequired: true,
+          ...source.options,
+          apiKeyRequired: source.options.apiKeyRequired !== false,
           baseURL: sourceBaseUrl,
           apiKey: source.apiKey,
         },
@@ -1967,6 +2006,13 @@ async function createRunPacketSnapshot(workspace) {
   return snapshotPath;
 }
 
+async function snapshotSecretFiles(snapshotPath) {
+  const snapshot = await readJsonFile(snapshotPath);
+  return Array.isArray(snapshot.secret_files)
+    ? snapshot.secret_files.filter((item) => typeof item === "string" && item.trim())
+    : [];
+}
+
 async function auditRunPacketAttempt({ workspace, packetPath, snapshotPath, validationTimeout }) {
   return runSupervisorJson(
     [
@@ -2778,6 +2824,12 @@ async function appRunPacket(args) {
   });
   try {
     snapshotPath = await createRunPacketSnapshot(workspace);
+    const secretFiles = await snapshotSecretFiles(snapshotPath);
+    if (secretFiles.length > 0) {
+      throw new Error(
+        `workspace contains secret-like paths; use a sanitized worktree before delegation: ${secretFiles.join(", ")}`,
+      );
+    }
     const submitResult = await setComposerValue(args.port, packet.prompt);
     if (!submitResult.value?.ok) {
       throw new Error(`set-composer failed: ${submitResult.value?.reason ?? "unknown"}`);
@@ -2958,6 +3010,25 @@ async function runPacket(args) {
     ? 0
     : positiveIntOrDefault(args.providerRateLimitFailFastCount, DEFAULT_PROVIDER_RATE_LIMIT_FAIL_FAST_COUNT);
   const snapshotPath = await createRunPacketSnapshot(workspace);
+  const secretFiles = await snapshotSecretFiles(snapshotPath);
+  if (secretFiles.length > 0) {
+    await unlink(snapshotPath).catch(() => {});
+    await printJsonPayload(
+      {
+        ok: false,
+        cli_ok: false,
+        exit_code: 1,
+        status: "workspace_secret_paths_blocked",
+        supervisor_state: "workspace_secret_paths_blocked",
+        packet: packetPath,
+        workspace,
+        secret_files: secretFiles,
+        next_action: "Remove secret-like files from the delegated workspace or use a sanitized worktree.",
+      },
+      args.out,
+    );
+    return;
+  }
   const usageBefore = await captureUsageSnapshot(args, "before");
   const dbDeltaBefore = args.modelUsageDb
     ? await captureAppRunPacketDbDeltaBefore(args, packetPath)

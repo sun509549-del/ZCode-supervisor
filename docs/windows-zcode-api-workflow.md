@@ -71,10 +71,20 @@ On Windows, validation commands must use `python` rather than `python3`. The
 wrapper creates a bounded task packet, invokes ZCode once, audits every changed
 file, reruns validation, and records compact JSON under
 `.codex\zcode\runs`. It defaults to one attempt so Codex does not stay active
-as a polling supervisor. After 60 seconds, the wrapper may accept and stop a
-still-running worker once the scope audit and validation both pass; override
-this with `-AcceptValidatedArtifactAfterMs` when a task needs a longer quiet
-window.
+as a polling supervisor. Early acceptance is disabled by default. For a worker
+that does not exit after producing a validated change, set
+`-AcceptValidatedArtifactAfterMs`; the controller requires at least one changed
+file before it can stop the worker early.
+
+Delegation stops before contacting the model when the workspace contains
+secret-like paths such as `.env`, private keys, `.ssh`, or credential files.
+Create a sanitized worktree without those files for delegated work. ZCode can
+still read non-secret source files in that worktree when it needs architectural
+context, while the allowed-file list remains the enforced write boundary.
+
+Use forward slashes inside validation paths, for example
+`python tests/test_ledger.py`. The supervisor also preserves native Windows
+backslash paths when parsing a validation command.
 
 ## 4. Review in Codex
 

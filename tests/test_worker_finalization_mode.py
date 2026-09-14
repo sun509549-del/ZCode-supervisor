@@ -13,8 +13,15 @@ ZCODECTL = ROOT / "tools/zcode_control/zcodectl.mjs"
 STRICT_COMPARISON = ROOT / "tools/zcode_eval/strict_contract_comparison.py"
 
 
-def write_fake_cli(root: Path, *, hang: bool = False, write_marker: bool = False) -> Path:
+def write_fake_cli(
+    root: Path,
+    *,
+    hang: bool = False,
+    write_marker: bool = False,
+    write_change: bool = True,
+) -> Path:
     cli = root / "fake-zcode.cjs"
+    change_block = "fs.writeFileSync(path.join(cwd, 'src/app.js'), 'after\\n');" if write_change else ""
     marker_block = ""
     if write_marker:
         marker_block = (
@@ -33,7 +40,7 @@ def write_fake_cli(root: Path, *, hang: bool = False, write_marker: bool = False
                 "const path = require('node:path');",
                 "const cwdIndex = process.argv.indexOf('--cwd');",
                 "const cwd = cwdIndex >= 0 ? process.argv[cwdIndex + 1] : process.cwd();",
-                "fs.writeFileSync(path.join(cwd, 'src/app.js'), 'after\\n');",
+                change_block,
                 marker_block,
                 "process.stdout.write(JSON.stringify({ response: 'done' }) + '\\n');",
                 tail,
@@ -45,13 +52,19 @@ def write_fake_cli(root: Path, *, hang: bool = False, write_marker: bool = False
     return cli
 
 
-def make_packet(root: Path, *, worker_finalization: str = "zcode_owned") -> tuple[Path, Path]:
+def make_packet(
+    root: Path,
+    *,
+    worker_finalization: str = "zcode_owned",
+    initial_content: str = "before",
+    expected_content: str = "after",
+) -> tuple[Path, Path]:
     workspace = root / "workspace"
     (workspace / "src").mkdir(parents=True)
-    (workspace / "src/app.js").write_text("before\n", encoding="utf-8")
+    (workspace / "src/app.js").write_text(f"{initial_content}\n", encoding="utf-8")
     (workspace / "check.py").write_text(
         "from pathlib import Path\n"
-        "raise SystemExit(0 if Path('src/app.js').read_text() == 'after\\n' else 1)\n",
+        f"raise SystemExit(0 if Path('src/app.js').read_text() == {expected_content + chr(10)!r} else 1)\n",
         encoding="utf-8",
     )
     packet = root / f"packet-{worker_finalization}.json"
@@ -175,6 +188,19 @@ class WorkerFinalizationRunPacketTests(unittest.TestCase):
             self.assertTrue(result["audit"]["strict_contract"]["accepted"])
             self.assertTrue(result["audit"]["strict_contract"]["supervisor_owned_finalization"])
             self.assertFalse((root / "workspace/.codex/zcode/runs/zcode_self_audit.json").exists())
+
+    def test_early_acceptance_requires_an_actual_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, packet = make_packet(root, initial_content="ready", expected_content="ready")
+            cli = write_fake_cli(root, hang=True, write_change=False)
+
+            result = run_packet(packet, cli, accept_after_ms=100, timeout_ms=400)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["supervisor_state"], "run_timeout")
+            self.assertFalse(result["accepted_validated_artifact"])
+            self.assertEqual(result["audit"]["changed_count"], 0)
 
 
 class WorkerFinalizationLauncherTests(unittest.TestCase):
