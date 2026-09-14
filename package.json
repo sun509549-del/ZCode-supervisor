@@ -7,7 +7,8 @@
   "license": "MIT",
   "scripts": {
     "check": "bash scripts/check.sh",
-    "test": "python3 -m unittest tests/test_zcode_supervisor.py tests/test_zcode_repo_setup.py tests/test_zcode_eval.py tests/test_zcode_release.py"
+    "test": "python3 -m unittest tests/test_zcode_supervisor.py tests/test_zcode_repo_setup.py tests/test_zcode_eval.py tests/test_zcode_release.py",
+    "dashboard": "node tools/zcode_dashboard/server.mjs"
   },
   "engines": {
     "node": ">=22"

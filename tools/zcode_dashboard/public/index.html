@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ZCode Supervisor 本地任务控制台">
+  <title>ZCode 任务控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#overview" aria-label="ZCode 任务控制台首页">
+      <span class="brand-mark" aria-hidden="true">Z</span>
+      <span><strong>ZCode</strong><small>SUPERVISOR</small></span>
+    </a>
+    <nav class="side-nav" aria-label="页面导航">
+      <a class="active" href="#overview"><span>01</span>运行总览</a>
+      <a href="#new-task"><span>02</span>新建任务</a>
+      <a href="#task-list"><span>03</span>任务记录</a>
+    </nav>
+    <div class="sidebar-note">
+      <span class="privacy-icon" aria-hidden="true">⌁</span>
+      <div>
+        <strong>本地安全连接</strong>
+        <p>API 密钥不会进入页面，仅显示已脱敏的配置名称。</p>
+      </div>
+    </div>
+    <p class="version">LOCAL CONTROL SURFACE · 01</p>
+  </aside>
+
+  <main class="main-shell" id="overview">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">WORKSPACE PULSE</p>
+        <h1>任务控制台</h1>
+        <p class="subtitle">看清每一次委派的成本、进度与质量。</p>
+      </div>
+      <div class="topbar-actions">
+        <div class="workspace-chip" title="当前工作区">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span><small>当前工作区</small><strong id="workspaceName">正在连接…</strong></span>
+        </div>
+        <button class="icon-button" id="refreshButton" type="button" aria-label="刷新数据" title="刷新数据">
+          <span aria-hidden="true">↻</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="metrics-grid" aria-label="任务指标">
+      <article class="metric-card accent-card">
+        <div class="metric-top"><span>任务总数</span><span class="metric-index">01</span></div>
+        <strong class="metric-value" id="totalTasks">—</strong>
+        <p>当前工作区全部记录</p>
+      </article>
+      <article class="metric-card">
+        <div class="metric-top"><span>正在运行</span><span class="pulse-bars" aria-hidden="true"><i></i><i></i><i></i></span></div>
+        <strong class="metric-value" id="runningTasks">—</strong>
+        <p id="runningHint">等待同步状态</p>
+      </article>
+      <article class="metric-card">
+        <div class="metric-top"><span>任务成功率</span><span class="metric-index">03</span></div>
+        <strong class="metric-value" id="successRate">—</strong>
+        <p id="successHint">基于已有终态任务</p>
+      </article>
+      <article class="metric-card ink-card">
+        <div class="metric-top"><span>已记录 Tokens</span><span class="metric-index">04</span></div>
+        <strong class="metric-value" id="totalTokens">—</strong>
+        <p id="tokenCoverage">只统计可验证的 Token 证据</p>
+      </article>
+    </section>
+
+    <section class="control-grid">
+      <article class="panel task-composer" id="new-task">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">NEW DELEGATION</p>
+            <h2>创建受控任务</h2>
+          </div>
+          <span class="number-badge">+</span>
+        </div>
+        <form id="taskForm">
+          <label class="field field-wide">
+            <span>任务目标</span>
+            <textarea id="objectiveInput" rows="3" maxlength="4000" required placeholder="例如：修复订单金额舍入问题，并保持现有 API 行为"></textarea>
+          </label>
+          <div class="form-row">
+            <label class="field">
+              <span>ZCode API</span>
+              <select id="providerSelect" required><option value="">加载配置中…</option></select>
+            </label>
+            <label class="field">
+              <span>模型</span>
+              <select id="modelSelect" required><option value="">请先选择 API</option></select>
+            </label>
+          </div>
+          <div class="selection-strip">
+            <span><i class="status-light" aria-hidden="true"></i>当前生效：<strong id="activeSelection">读取中…</strong></span>
+            <button class="text-button" id="applySelectionButton" type="button">仅应用 API 设置</button>
+          </div>
+          <label class="field field-wide">
+            <span>允许修改的文件 <small>每行一个相对路径</small></span>
+            <textarea id="allowedFilesInput" rows="2" required placeholder="src/order.js&#10;tests/order.test.js"></textarea>
+          </label>
+          <div class="form-row validation-row">
+            <label class="field">
+              <span>验证命令</span>
+              <input id="validationInput" type="text" maxlength="2000" required placeholder="npm test -- order.test.js">
+            </label>
+            <label class="field compact-field">
+              <span>任务类型</span>
+              <select id="taskClassSelect">
+                <option value="small-fix">小型修复</option>
+                <option value="root-cause">根因分析</option>
+                <option value="long-horizon">长周期任务</option>
+                <option value="architecture">架构调整</option>
+                <option value="production-gate">生产门禁</option>
+                <option value="mobile-debug">移动端调试</option>
+                <option value="research">技术研究</option>
+              </select>
+            </label>
+          </div>
+          <div class="composer-footer">
+            <p><span aria-hidden="true">◇</span> 启动前会锁定允许文件并由主管重新验证。</p>
+            <button class="primary-button" id="submitTaskButton" type="submit"><span>交给 ZCode</span><b aria-hidden="true">→</b></button>
+          </div>
+        </form>
+      </article>
+
+      <article class="panel usage-panel">
+        <div class="panel-heading compact">
+          <div>
+            <p class="eyebrow">RESOURCE TRACE</p>
+            <h2>消耗概览</h2>
+          </div>
+          <span class="updated-time" id="updatedTime">等待数据</span>
+        </div>
+        <div class="token-total">
+          <span>可验证 Token 总量</span>
+          <strong id="usageTotal">—</strong>
+        </div>
+        <div class="token-bar" aria-label="Token 构成">
+          <i class="input-segment" id="inputSegment"></i>
+          <i class="output-segment" id="outputSegment"></i>
+          <i class="reasoning-segment" id="reasoningSegment"></i>
+        </div>
+        <div class="legend">
+          <span><i class="input-dot"></i>输入 <strong id="inputTokens">—</strong></span>
+          <span><i class="output-dot"></i>输出 <strong id="outputTokens">—</strong></span>
+          <span><i class="reasoning-dot"></i>推理 <strong id="reasoningTokens">—</strong></span>
+        </div>
+        <div class="mini-stats">
+          <div><span>累计耗时</span><strong id="totalDuration">—</strong></div>
+          <div><span>平均耗时</span><strong id="averageDuration">—</strong></div>
+          <div><span>有 Token 记录</span><strong id="measuredTasks">—</strong></div>
+        </div>
+        <div class="usage-footnote">
+          <span aria-hidden="true">i</span>
+          <p>只有上游返回或数据库增量可验证时才计入 Token。缺失数据标记为“未记录”。</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel tasks-panel" id="task-list">
+      <div class="tasks-header">
+        <div>
+          <p class="eyebrow">DELEGATION LEDGER</p>
+          <h2>任务记录</h2>
+        </div>
+        <div class="filters" role="search">
+          <label class="search-field"><span aria-hidden="true">⌕</span><input id="searchInput" type="search" placeholder="搜索任务或模型" aria-label="搜索任务或模型"></label>
+          <label><span class="sr-only">筛选状态</span><select id="statusFilter"><option value="all">全部状态</option><option value="active">进行中</option><option value="success">已成功</option><option value="failed">未通过</option></select></label>
+          <label><span class="sr-only">排序方式</span><select id="sortSelect"><option value="newest">最新优先</option><option value="duration">耗时最长</option><option value="tokens">Token 最高</option></select></label>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>任务</th><th>状态</th><th>API / 模型</th><th>Tokens</th><th>耗时</th><th>变更</th><th>开始时间</th><th><span class="sr-only">操作</span></th></tr></thead>
+          <tbody id="taskTableBody">
+            <tr class="loading-row"><td colspan="8"><span class="spinner"></span>正在读取任务证据…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="emptyState" hidden>
+        <span aria-hidden="true">□</span><h3>没有匹配的任务</h3><p>调整筛选条件，或从上方创建第一项受控任务。</p>
+      </div>
+      <div class="table-footer"><span id="taskCount">—</span><span>每 5 秒自动同步</span></div>
+    </section>
+  </main>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+  <aside class="detail-drawer" id="detailDrawer" aria-labelledby="drawerTitle" aria-hidden="true">
+    <header class="drawer-header">
+      <div><p class="eyebrow">TASK EVIDENCE</p><h2 id="drawerTitle">任务详情</h2></div>
+      <button class="icon-button" id="closeDrawerButton" type="button" aria-label="关闭详情">×</button>
+    </header>
+    <div class="drawer-content" id="drawerContent"></div>
+  </aside>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

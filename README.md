@@ -78,6 +78,30 @@ pwsh -File .\scripts\setup-windows.ps1 `
 See [Windows: Codex → ZCode API → Codex](docs/windows-zcode-api-workflow.md)
 for the bounded execution and review flow.
 
+### Local task dashboard
+
+Start the dependency-free local dashboard for any repository that already has
+ZCode Supervisor routing installed:
+
+```powershell
+zcode-dashboard --workspace C:\path\to\project
+```
+
+From a source checkout, use:
+
+```powershell
+npm run dashboard -- --workspace C:\path\to\project
+```
+
+The page lists current and historical tasks, live status, elapsed time, changed
+files, audit and validation results, and measured input/output/reasoning token
+usage. Missing token evidence is shown as unavailable rather than zero. You can
+select a configured ZCode API and model or launch a bounded task with an
+explicit allowed-file list and validation command. The server binds to
+`127.0.0.1` and exposes only redacted provider metadata; API keys never enter
+the browser. API selection applies to the local ZCode CLI, so the dashboard
+runs one task at a time to keep provider selection deterministic.
+
 For the opt-in direct delegated measurement workflow added after PR #10, see
 [Direct Delegated Operational Workflow](docs/direct-delegated-operational-workflow.md).
 Direct mode is separate from codex-mediated claims and does not make ZCode

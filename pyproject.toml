@@ -27,10 +27,12 @@ zcode-auto-route = "tools.zcode_supervisor.auto_route:auto_route_entrypoint"
 zcode-eval = "tools.zcode_eval.zcode_eval:main"
 zcode-release-check = "tools.zcode_eval.zcode_release:main"
 zcodectl = "tools.zcode_control:main"
+zcode-dashboard = "tools.zcode_dashboard:main"
 
 [tool.setuptools.packages.find]
 include = ["tools*"]
 
 [tool.setuptools.package-data]
 "tools.zcode_control" = ["*.mjs"]
+"tools.zcode_dashboard" = ["*.mjs", "public/*"]
 "tools.zcode_eval" = ["fixtures/*.png", "rubrics/*.json"]

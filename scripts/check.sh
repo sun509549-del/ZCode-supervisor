@@ -6,6 +6,7 @@ python3 -m py_compile tools/zcode_supervisor/zcode_supervisor.py tools/zcode_sup
 python3 scripts/check_live_evidence_manifest.py docs/zcode-strict-contract-v3/examples/live-evidence-manifest.fixture-ready.example.json >/dev/null
 ruby -c packaging/homebrew/zcode-supervisor.rb >/dev/null
 node --check tools/zcode_control/zcodectl.mjs
+node --check tools/zcode_dashboard/server.mjs
 node --check tools/zcode_control/browser_scripts.mjs
 node --test tests/zcode_provider_errors.test.mjs tests/zcode_run_packet_e2e.test.mjs
 

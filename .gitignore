@@ -5,6 +5,7 @@
 /zcode-test-workspace/
 /.local/
 /.autoreview-reports/
+/.codex/zcode/runs/
 
 # Python
 __pycache__/

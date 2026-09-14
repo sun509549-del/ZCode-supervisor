@@ -15,6 +15,11 @@ REQUIRED_FILES = {
     "tools/zcode_control/browser_scripts.mjs",
     "tools/zcode_control/provider_errors.mjs",
     "tools/zcode_control/zcodectl.mjs",
+    "tools/zcode_dashboard/__init__.py",
+    "tools/zcode_dashboard/server.mjs",
+    "tools/zcode_dashboard/public/index.html",
+    "tools/zcode_dashboard/public/styles.css",
+    "tools/zcode_dashboard/public/app.js",
     "tools/zcode_supervisor/zcode_supervisor.py",
     "tools/zcode_supervisor/repo_setup.py",
     "tools/zcode_supervisor/auto_route.py",
@@ -34,6 +39,7 @@ REQUIRED_ENTRY_POINTS = {
     "zcode-eval = tools.zcode_eval.zcode_eval:main",
     "zcode-release-check = tools.zcode_eval.zcode_release:main",
     "zcodectl = tools.zcode_control:main",
+    "zcode-dashboard = tools.zcode_dashboard:main",
 }
 
 

@@ -10,7 +10,7 @@ from unittest import mock
 
 import tomllib
 
-from tools import zcode_control
+from tools import zcode_control, zcode_dashboard
 from scripts import verify_python_wheel_for_tests
 
 
@@ -28,7 +28,12 @@ class DistributionPackagingTests(unittest.TestCase):
         )
         self.assertEqual(scripts["zcode-auto-route"], "tools.zcode_supervisor.auto_route:auto_route_entrypoint")
         self.assertEqual(scripts["zcodectl"], "tools.zcode_control:main")
+        self.assertEqual(scripts["zcode-dashboard"], "tools.zcode_dashboard:main")
         self.assertEqual(pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_control"], ["*.mjs"])
+        self.assertEqual(
+            pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_dashboard"],
+            ["*.mjs", "public/*"],
+        )
         self.assertEqual(
             pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_eval"],
             ["fixtures/*.png", "rubrics/*.json"],
@@ -124,6 +129,16 @@ print(create_vision_fixture.__name__)
         self.assertEqual(command[0], "node")
         self.assertTrue(command[1].endswith("zcodectl.mjs"))
         self.assertEqual(command[2:], ["cli-preflight"])
+
+    def test_dashboard_wrapper_invokes_bundled_node_server(self):
+        with mock.patch("tools.zcode_dashboard.subprocess.call", return_value=0) as call:
+            with mock.patch.object(sys, "argv", ["zcode-dashboard", "--workspace", "fixture"]):
+                self.assertEqual(zcode_dashboard.main(), 0)
+
+        command = call.call_args.args[0]
+        self.assertEqual(command[0], "node")
+        self.assertTrue(command[1].endswith("server.mjs"))
+        self.assertEqual(command[2:], ["--workspace", "fixture"])
 
 
 if __name__ == "__main__":
