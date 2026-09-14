@@ -477,6 +477,8 @@ def run_json_command(
         command,
         cwd=cwd,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=os.name == "posix",

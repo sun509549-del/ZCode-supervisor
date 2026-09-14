@@ -559,7 +559,7 @@ class ZCodeSupervisorTests(unittest.TestCase):
             self.assertTrue(payload["vision"]["required"])
             self.assertEqual(payload["vision"]["service"], "zai-mcp-server")
             self.assertEqual(payload["vision"]["image_files"], ["screenshots/state.png"])
-            self.assertIn("GLM-5.2 is text-only", payload["prompt"])
+            self.assertIn("Do not assume the selected worker model can inspect images", payload["prompt"])
             self.assertIn("uppercase #RRGGBB", payload["prompt"])
             self.assertIn("vision_service_unavailable", payload["prompt"])
 

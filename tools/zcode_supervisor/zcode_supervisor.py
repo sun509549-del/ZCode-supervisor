@@ -468,7 +468,7 @@ def make_prompt(packet: dict[str, Any]) -> str:
             )
         vision_block = (
             "Vision/image policy:\n"
-            "- GLM-5.2 is text-only; do not guess from image filenames or surrounding text.\n"
+            "- Do not assume the selected worker model can inspect images; do not guess from filenames or surrounding text.\n"
             f"- Use ZCode's built-in image service/MCP before relying on image details. Preferred service: {service}.\n"
             f"- Required image context: {images}.\n"
             f"{sample_lines}"
@@ -480,8 +480,8 @@ def make_prompt(packet: dict[str, Any]) -> str:
         f"Workspace: {packet['workspace']}\n"
         f"Workspace kind: {packet['workspace_kind']}\n"
         f"Objective: {packet['objective']}\n"
-        f"GLM-5.2 task class: {packet['task_class']}\n"
-        f"GLM-5.2 effort: {packet['effort']}\n"
+        f"ZCode task class: {packet['task_class']}\n"
+        f"ZCode effort: {packet['effort']}\n"
         f"Risk budget: {packet['risk_budget']}\n"
         f"Max changed files: {max_changed}\n"
         f"Context policy: {packet['context_policy']}\n"
@@ -627,7 +627,7 @@ def packet_command(args: argparse.Namespace) -> int:
             "service": vision_service,
             "image_files": image_files,
             "color_samples": color_samples,
-            "model_limit": "GLM-5.2 is text-only; use ZCode image service for visual understanding.",
+            "model_limit": "Use the ZCode image service when the selected worker model cannot inspect images directly.",
         },
     }
     if strict_contract is not None:
@@ -1183,6 +1183,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--skip-vision-mcp", action="store_true")
     install.add_argument("--vision-mcp-server", default=DEFAULT_VISION_SERVICE)
     install.add_argument("--vision-mcp-package", default="@z_ai/mcp-server")
+    install.add_argument("--python-command", default="python3")
     install.add_argument("--force", action="store_true")
     install.set_defaults(func=install_repo_command)
 

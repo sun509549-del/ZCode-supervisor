@@ -30,6 +30,28 @@ class ZCodeRepoSetupTests(unittest.TestCase):
             time.sleep(0.05)
         return path.exists()
 
+    def test_run_json_command_decodes_utf8_independently_of_windows_locale(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "utf8_json.py"
+            script.write_text(
+                "import json, sys\n"
+                "payload = json.dumps({'provider': '基元律动'}, ensure_ascii=False).encode('utf-8')\n"
+                "sys.stdout.buffer.write(payload)\n",
+                encoding="utf-8",
+            )
+
+            returncode, payload, stdout, stderr, timed_out = auto_route.run_json_command(
+                [sys.executable, str(script)],
+                root,
+            )
+
+            self.assertEqual(returncode, 0)
+            self.assertEqual(payload, {"provider": "基元律动"})
+            self.assertIn("基元律动", stdout)
+            self.assertEqual(stderr, "")
+            self.assertFalse(timed_out)
+
     def test_install_repo_writes_routing_contract_and_vision_mcp_without_agents_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._fixture_workspace(Path(tmp))
@@ -74,6 +96,33 @@ class ZCodeRepoSetupTests(unittest.TestCase):
             self.assertEqual(main(["install-repo", "--repo", str(repo), "--skip-vision-mcp"]), 0)
 
             self.assertFalse((repo / ".agents/mcp.json").exists())
+
+    def test_install_repo_can_render_windows_python_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._fixture_workspace(Path(tmp))
+
+            self.assertEqual(
+                main(
+                    [
+                        "install-repo",
+                        "--repo",
+                        str(repo),
+                        "--write-agents",
+                        "--skip-vision-mcp",
+                        "--python-command",
+                        "python",
+                    ]
+                ),
+                0,
+            )
+
+            routing = json.loads((repo / ".codex/zcode-routing.json").read_text(encoding="utf-8"))
+            delegation = (repo / ".codex/ZCODE_DELEGATION.md").read_text(encoding="utf-8")
+            agents = (repo / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertEqual(routing["paths"]["python"], "python")
+            self.assertIn("python ", delegation)
+            self.assertNotIn("python3 ", delegation)
+            self.assertIn("`python <zcode-supervisor>", agents)
 
     def test_install_repo_can_add_agents_pointer_once(self):
         with tempfile.TemporaryDirectory() as tmp:

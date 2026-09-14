@@ -39,6 +39,7 @@ def zcode_repo_root() -> Path:
 def routing_payload(
     repo: Path,
     *,
+    python_command: str = "python3",
     vision_mcp_server: str = DEFAULT_VISION_MCP_SERVER,
     vision_mcp_package: str = DEFAULT_VISION_MCP_PACKAGE,
 ) -> dict[str, Any]:
@@ -85,6 +86,7 @@ def routing_payload(
             "codex_review_mode": "thin_launcher_then_autoreview",
         },
         "paths": {
+            "python": python_command,
             "zcode_supervisor": str(supervisor),
             "zcodectl": str(controller),
             "packets": ".codex/zcode/packets",
@@ -107,11 +109,13 @@ def routing_payload(
 def delegation_doc(
     repo: Path,
     *,
+    python_command: str = "python3",
     vision_mcp_server: str = DEFAULT_VISION_MCP_SERVER,
     vision_mcp_package: str = DEFAULT_VISION_MCP_PACKAGE,
 ) -> str:
     payload = routing_payload(
         repo,
+        python_command=python_command,
         vision_mcp_server=vision_mcp_server,
         vision_mcp_package=vision_mcp_package,
     )
@@ -151,7 +155,7 @@ orchestration, audit, and final acceptance while ZCode handles implementation.
 1. Codex classifies the task through the routing contract:
 
 ```bash
-python3 {supervisor} auto-route \\
+{python_command} {supervisor} auto-route \\
   --workspace . \\
   --objective "<specific outcome>"
 ```
@@ -160,7 +164,7 @@ python3 {supervisor} auto-route \\
    validation command, then delegates:
 
 ```bash
-python3 {supervisor} auto-route \\
+{python_command} {supervisor} auto-route \\
   --workspace . \\
   --objective "<specific outcome>" \\
   --allowed "<file>" \\
@@ -181,7 +185,7 @@ validation command, not ask the user.
 If manual control is needed, Codex can create a packet directly:
 
 ```bash
-python3 {supervisor} packet \\
+{python_command} {supervisor} packet \\
   --workspace . \\
   --objective "<specific outcome>" \\
   --allowed "<file>" \\
@@ -242,7 +246,7 @@ See `.codex/zcode-routing.json` for machine-readable defaults.
 """
 
 
-def agents_block() -> str:
+def agents_block(*, python_command: str = "python3") -> str:
     return f"""{AGENTS_BEGIN}
 ## ZCode Supervisor Routing
 
@@ -251,7 +255,7 @@ Default split: Codex plans, runs `auto-route`, orchestrates, audits, validates,
 and final-accepts; ZCode performs only bounded implementation through
 `zcodectl run-packet`.
 Before direct implementation edits, Codex should run:
-`python3 <zcode-supervisor>/tools/zcode_supervisor/zcode_supervisor.py auto-route --workspace . --objective "<task>"`.
+`{python_command} <zcode-supervisor>/tools/zcode_supervisor/zcode_supervisor.py auto-route --workspace . --objective "<task>"`.
 If ZCode produces no run JSON or no changed files for an implementation task,
 record a failed delegation and retry with a smaller allowed-file packet before
 doing direct recovery.
@@ -305,9 +309,9 @@ def write_text_if_allowed(repo: Path, path: Path, text: str, *, force: bool) -> 
     return "written"
 
 
-def install_agents_block(repo: Path, *, force: bool) -> str:
+def install_agents_block(repo: Path, *, force: bool, python_command: str = "python3") -> str:
     path = repo / AGENTS_FILE
-    block = agents_block()
+    block = agents_block(python_command=python_command)
     ensure_repo_local_output(repo, path)
     if not path.exists():
         write_repo_text(repo, path, f"# AGENTS.md\n\n{block}")
@@ -376,6 +380,7 @@ def install_repo(
     *,
     write_agents: bool,
     force: bool,
+    python_command: str = "python3",
     vision_mcp: bool = True,
     vision_mcp_server: str = DEFAULT_VISION_MCP_SERVER,
     vision_mcp_package: str = DEFAULT_VISION_MCP_PACKAGE,
@@ -392,6 +397,7 @@ def install_repo(
         json.dumps(
             routing_payload(
                 repo,
+                python_command=python_command,
                 vision_mcp_server=vision_mcp_server,
                 vision_mcp_package=vision_mcp_package,
             ),
@@ -407,6 +413,7 @@ def install_repo(
         repo / DELEGATION_FILE,
         delegation_doc(
             repo,
+            python_command=python_command,
             vision_mcp_server=vision_mcp_server,
             vision_mcp_package=vision_mcp_package,
         ),
@@ -429,7 +436,7 @@ def install_repo(
 
     agents_status = "not_requested"
     if write_agents:
-        agents_status = install_agents_block(repo, force=force)
+        agents_status = install_agents_block(repo, force=force, python_command=python_command)
         if agents_status in {"created", "appended", "replaced"}:
             written.append(str(AGENTS_FILE))
         else:
@@ -453,6 +460,7 @@ def install_repo_command(args: Any) -> int:
         args.repo,
         write_agents=args.write_agents,
         force=args.force,
+        python_command=args.python_command,
         vision_mcp=not args.skip_vision_mcp,
         vision_mcp_server=args.vision_mcp_server,
         vision_mcp_package=args.vision_mcp_package,
@@ -481,6 +489,7 @@ def install_repo_entrypoint(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-vision-mcp", action="store_true")
     parser.add_argument("--vision-mcp-server", default=DEFAULT_VISION_MCP_SERVER)
     parser.add_argument("--vision-mcp-package", default=DEFAULT_VISION_MCP_PACKAGE)
+    parser.add_argument("--python-command", default="python3")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     return install_repo_command(args)

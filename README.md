@@ -61,6 +61,23 @@ Before real delegated work with `--execute`, install and sign in to ZCode. For
 full prerequisites, source fallback, and troubleshooting, use the
 [Setup Guide](#setup-guide-set-up-one-target-repo).
 
+### Windows PowerShell
+
+This checkout includes native Windows setup and execution wrappers. The worker
+model is selected from an API profile already configured in ZCode Desktop:
+
+```powershell
+pwsh -File .\scripts\setup-windows.ps1 -Repo C:\path\to\project -ListApis
+
+pwsh -File .\scripts\setup-windows.ps1 `
+  -Repo C:\path\to\project `
+  -Provider <zcode-provider-id> `
+  -Model <model-id>
+```
+
+See [Windows: Codex → ZCode API → Codex](docs/windows-zcode-api-workflow.md)
+for the bounded execution and review flow.
+
 For the opt-in direct delegated measurement workflow added after PR #10, see
 [Direct Delegated Operational Workflow](docs/direct-delegated-operational-workflow.md).
 Direct mode is separate from codex-mediated claims and does not make ZCode
@@ -659,7 +676,8 @@ Control surface priority:
 
 1. **ZCode bundled headless CLI, recommended and required for headless
    delegation.** `cli-prompt` and `run-packet` use this path. It is the path
-   validated by this project on macOS with ZCode 3.1.2.
+   validated by this project on macOS with ZCode 3.1.2 and by this checkout on
+   Windows with ZCode 3.11.2.
 2. **`cua-driver` plus Electron CDP, optional.** `cua-driver` is an MIT-licensed
    background computer-use driver from the Cua project:
    https://cua.ai/docs/cua-driver/guide/getting-started/introduction
@@ -677,7 +695,8 @@ Minimum local tooling:
 - ZCode desktop app installed and connected to a model provider.
 - Node.js `>=22`.
 - Python `>=3.11`.
-- Git and a POSIX-like shell for `scripts/check.sh`.
+- Git. A POSIX-like shell is needed only for `scripts/check.sh`; Windows setup
+  and delegation use the PowerShell wrappers.
 - Network access to the configured model provider.
 
 The latest official ZCode install docs list these supported platforms:
@@ -694,7 +713,7 @@ Project support status:
 | Platform | Status | Notes |
 | --- | --- | --- |
 | macOS | Tested | ZCode 3.1.2, bundled CLI path `/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs`, bundled CLI version `0.14.8`, GUI config path `~/.zcode/v2/config.json`, CLI config path `~/.zcode/cli/config.json`. |
-| Windows | Expected, not verified | ZCode is officially supported and 3.1.2 adds Windows shell selection, but this project still needs Windows-specific CLI path discovery and shell validation. Set `ZCODE_CLI_PATH` if auto-detection does not find the bundled CLI. |
+| Windows | Tested in this checkout | ZCode 3.11.2, bundled CLI 0.16.5. The controller resolves `USERPROFILE`, uses the Windows Python launcher, and discovers custom ZCode installs through the uninstall registry. Set `ZCODE_CLI_PATH` only when discovery cannot find the bundled CLI. |
 | Linux | Expected/beta, not verified | ZCode Linux packages are distributed through the official beta group, but this project has not validated Linux CLI paths, desktop launch, or config discovery yet. Set `ZCODE_CLI_PATH`, `--source-config`, and `--cli-config` as needed. |
 
 `bootstrap-cli-config` can copy a local ZCode GUI Coding Plan API key into the

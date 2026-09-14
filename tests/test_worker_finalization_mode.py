@@ -67,7 +67,7 @@ def make_packet(root: Path, *, worker_finalization: str = "zcode_owned") -> tupl
             "--allowed",
             "src/app.js",
             "--validation",
-            "python3 check.py",
+            f'"{sys.executable}" check.py',
             "--worker-finalization",
             worker_finalization,
             "--strict-contract-rubric-id",
@@ -228,9 +228,9 @@ class WorkerFinalizationLauncherTests(unittest.TestCase):
 
 
 class FixedGlmGuardTests(unittest.TestCase):
-    def test_zcode_cli_bootstrap_default_remains_glm_5_2(self):
+    def test_zcode_cli_bootstrap_uses_a_model_from_the_selected_api_profile(self):
         source = ZCODECTL.read_text(encoding="utf-8")
-        self.assertIn('args.model ?? "glm-5.2"', source)
+        self.assertIn('args.model ?? availableModelIds[0]', source)
         self.assertNotIn("glm-4.7", source)
 
     def test_no_glm_4_7_fallback_in_runtime_paths(self):

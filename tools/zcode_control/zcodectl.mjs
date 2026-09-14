@@ -6,7 +6,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, chmod, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import http from "node:http";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -24,7 +24,12 @@ import {
 const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 9223;
 const DEFAULT_BUNDLE_ID = "dev.zcode.app";
-const DEFAULT_ZCODE_CLI = "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs";
+const MACOS_ZCODE_CLI = "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs";
+const WINDOWS_UNINSTALL_ROOTS = [
+  "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+  "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+  "HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+];
 const PROMPT_TIMEOUT_MS = 30 * 60 * 1000;
 const TOOL_DIR = dirname(fileURLToPath(import.meta.url));
 const SUPERVISOR_SCRIPT = resolve(TOOL_DIR, "..", "zcode_supervisor", "zcode_supervisor.py");
@@ -59,7 +64,8 @@ Usage:
   node tools/zcode_control/zcodectl.mjs cli-doctor
   node tools/zcode_control/zcodectl.mjs cli-preflight
   node tools/zcode_control/zcodectl.mjs cli-version
-  node tools/zcode_control/zcodectl.mjs bootstrap-cli-config [--provider zai|bigmodel] [--model glm-5.2] [--source-config <json>] [--cli-config <json>] [--out <json>]
+  node tools/zcode_control/zcodectl.mjs api-profiles [--source-config <json>] [--out <json>]
+  node tools/zcode_control/zcodectl.mjs bootstrap-cli-config [--provider <zcode-provider-id>] [--model <model-id>] [--source-config <json>] [--cli-config <json>] [--out <json>]
   node tools/zcode_control/zcodectl.mjs vision-preflight [--workspace <path>] [--vision-service zai-mcp-server] [--cli-config <json>] [--out <json>]
   node tools/zcode_control/zcodectl.mjs cli-prompt (--text <prompt> | --text-file <path>) [--workspace <path>] [--mode plan|edit|build|yolo] [--timeout-ms 1800000] [--json] [--out <json>]
   node tools/zcode_control/zcodectl.mjs run-packet --packet <json> [--mode plan|edit|build|yolo] [--max-attempts 2] [--retry-delay-ms 60000] [--timeout-ms 1800000] [--validation-timeout 60] [--repair-validation|--no-repair-validation] [--accept-validated-artifact-after-ms <ms>] [--provider-rate-limit-fail-fast-count 3|--no-provider-rate-limit-fail-fast] [--usage-snapshot-source auto|zai-api|codexbar|none] [--usage-provider zai] [--model-usage-db <sqlite>] [--vision-preflight auto|required|off] [--json] [--out <json>]
@@ -178,9 +184,13 @@ async function pathExists(path) {
 }
 
 function homeFile(...parts) {
-  const home = process.env.HOME;
-  if (!home) throw new Error("HOME is not set");
-  return join(home, ...parts);
+  const userHome = process.env.HOME || process.env.USERPROFILE || homedir();
+  if (!userHome) throw new Error("User home directory could not be resolved");
+  return join(userHome, ...parts);
+}
+
+function pythonCommand() {
+  return process.env.ZCODE_SUPERVISOR_PYTHON || (process.platform === "win32" ? "python" : "python3");
 }
 
 function defaultCliConfigPath() {
@@ -230,12 +240,65 @@ async function writeJsonFileAtomic(path, value) {
   }
 }
 
+function defaultZcodeCliCandidates() {
+  const candidates = [];
+  if (process.platform === "darwin") candidates.push(MACOS_ZCODE_CLI);
+  if (process.platform === "win32") {
+    for (const root of [
+      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Programs", "ZCode") : null,
+      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "ZCode") : null,
+      process.env.ProgramFiles ? join(process.env.ProgramFiles, "ZCode") : null,
+      process.env["ProgramFiles(x86)"] ? join(process.env["ProgramFiles(x86)"], "ZCode") : null,
+    ].filter(Boolean)) {
+      candidates.push(join(root, "resources", "glm", "zcode.cjs"));
+    }
+  }
+  return candidates;
+}
+
+function windowsInstallDirsFromRegistry(raw) {
+  const installDirs = [];
+  for (const line of String(raw ?? "").split(/\r?\n/)) {
+    const match = line.match(/^\s+(DisplayIcon|UninstallString)\s+REG_\w+\s+(.+?)\s*$/i);
+    if (!match) continue;
+    let executable = match[2].trim();
+    const quoted = executable.match(/^"([^"]+)"/);
+    if (quoted) executable = quoted[1];
+    else executable = executable.replace(/\s+\/\w.*$/, "").replace(/,\d+$/, "").trim();
+    if (executable) installDirs.push(dirname(executable));
+  }
+  return [...new Set(installDirs)];
+}
+
+async function windowsRegistryZcodeCliCandidates() {
+  if (process.platform !== "win32") return [];
+  const candidates = [];
+  for (const root of WINDOWS_UNINSTALL_ROOTS) {
+    try {
+      const { stdout } = await execFileAsync("reg.exe", ["query", root, "/s", "/f", "ZCode", "/d"], {
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 5000,
+      });
+      for (const installDir of windowsInstallDirsFromRegistry(stdout)) {
+        candidates.push(join(installDir, "resources", "glm", "zcode.cjs"));
+      }
+    } catch {
+      // Missing keys and access-denied machine hives are normal for per-user installs.
+    }
+  }
+  return [...new Set(candidates)];
+}
+
 async function resolveZcodeCliPath() {
-  const candidates = [process.env.ZCODE_CLI_PATH, DEFAULT_ZCODE_CLI].filter(Boolean);
+  const candidates = [
+    process.env.ZCODE_CLI_PATH,
+    ...defaultZcodeCliCandidates(),
+    ...(await windowsRegistryZcodeCliCandidates()),
+  ].filter(Boolean);
   for (const candidate of candidates) {
     if (await pathExists(candidate)) return candidate;
   }
-  throw new Error(`ZCode CLI not found. Set ZCODE_CLI_PATH or install ZCode.app.`);
+  throw new Error("ZCode CLI not found. Set ZCODE_CLI_PATH or install ZCode Desktop.");
 }
 
 async function runZcodeCli(cliArgs, options = {}) {
@@ -483,6 +546,8 @@ function redactCliConfig(config) {
       ? modelConfig.main
       : null;
   const liteModel = typeof modelConfig.lite === "string" ? modelConfig.lite : null;
+  const selectedProviderId = mainModel?.includes("/") ? mainModel.slice(0, mainModel.indexOf("/")) : null;
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
   return {
     has_model: Boolean(mainModel),
     main_model: mainModel,
@@ -498,6 +563,7 @@ function redactCliConfig(config) {
     has_coding_plan_api_key: providers.some(
       (provider) => ["zai", "bigmodel"].includes(provider.id) && provider.has_api_key,
     ),
+    has_selected_provider_api_key: Boolean(selectedProvider?.has_api_key),
     config_shape_ok: availableShapeOk,
     diagnostics: availableShapeOk
       ? []
@@ -638,7 +704,7 @@ async function cliPreflight(args) {
   const doctorResult = await runZcodeCli(["doctor", "--json"]);
   const config = await inspectCliConfig(configPath);
   const promptReady = Boolean(
-    config.exists && config.has_model && config.has_coding_plan_api_key && config.config_shape_ok,
+    config.exists && config.has_model && config.has_selected_provider_api_key && config.config_shape_ok,
   );
   const payload = {
     ok: version.ok && doctorResult.ok && promptReady,
@@ -671,14 +737,16 @@ function normalizeModelId(model) {
   return value.toLowerCase();
 }
 
-function sourceProviderCandidates(providerId) {
+function sourceProviderCandidates(providerId, guiConfig) {
+  const providers = isRecord(guiConfig.provider) ? guiConfig.provider : {};
+  if (isRecord(providers[providerId])) return [providerId];
   if (providerId === "zai") {
     return ["builtin:zai-coding-plan", "builtin:zai", "builtin:zai-start-plan"];
   }
   if (providerId === "bigmodel") {
     return ["builtin:bigmodel-coding-plan", "builtin:bigmodel", "builtin:bigmodel-start-plan"];
   }
-  throw new Error("--provider must be zai or bigmodel");
+  return [providerId];
 }
 
 function displayProviderName(providerId) {
@@ -686,14 +754,14 @@ function displayProviderName(providerId) {
 }
 
 function fallbackProviderBaseUrl(providerId) {
-  return providerId === "bigmodel"
-    ? "https://open.bigmodel.cn/api/anthropic"
-    : "https://api.z.ai/api/anthropic";
+  if (providerId === "bigmodel") return "https://open.bigmodel.cn/api/anthropic";
+  if (providerId === "zai") return "https://api.z.ai/api/anthropic";
+  return null;
 }
 
 function pickSourceProvider(guiConfig, providerId) {
   const providers = isRecord(guiConfig.provider) ? guiConfig.provider : {};
-  for (const id of sourceProviderCandidates(providerId)) {
+  for (const id of sourceProviderCandidates(providerId, guiConfig)) {
     const provider = providers[id];
     if (!isRecord(provider)) continue;
     const options = isRecord(provider.options) ? provider.options : {};
@@ -701,7 +769,39 @@ function pickSourceProvider(guiConfig, providerId) {
     if (!apiKey) continue;
     return { id, provider, options, apiKey };
   }
-  throw new Error(`No ${providerId} API key found in GUI config`);
+  throw new Error(`No API key found for ZCode provider: ${providerId}`);
+}
+
+function apiProfileRows(guiConfig) {
+  const providers = isRecord(guiConfig.provider) ? guiConfig.provider : {};
+  return Object.entries(providers)
+    .filter(([, provider]) => isRecord(provider))
+    .map(([id, provider]) => {
+      const options = isRecord(provider.options) ? provider.options : {};
+      const models = isRecord(provider.models) ? Object.keys(provider.models) : [];
+      return {
+        id,
+        name: typeof provider.name === "string" ? provider.name : id,
+        kind: typeof provider.kind === "string" ? provider.kind : null,
+        models,
+        has_api_key: typeof options.apiKey === "string" && Boolean(options.apiKey.trim()),
+        has_base_url: typeof options.baseURL === "string" && Boolean(options.baseURL.trim()),
+      };
+    })
+    .filter((profile) => profile.has_api_key && profile.models.length > 0)
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function apiProfiles(args) {
+  const sourceConfigPath = argsPathOrDefault(args.sourceConfig, defaultGuiConfigPath());
+  const guiConfig = await readJsonFile(sourceConfigPath);
+  if (!isRecord(guiConfig)) throw new Error(`GUI config must be a JSON object: ${sourceConfigPath}`);
+  await printJsonPayload({
+    ok: true,
+    source_config: sourceConfigPath,
+    note: "API keys and base URLs are not included.",
+    profiles: apiProfileRows(guiConfig),
+  }, args.out);
 }
 
 function normalizedSourceModelIds(sourceProvider, preferredModels) {
@@ -720,21 +820,31 @@ function modelDisplayName(modelId) {
 
 async function bootstrapCliConfig(args) {
   const providerId = args.provider ?? "zai";
-  const mainModelId = normalizeModelId(args.model ?? "glm-5.2");
   const sourceConfigPath = argsPathOrDefault(args.sourceConfig, defaultGuiConfigPath());
   const cliConfigPath = argsPathOrDefault(args.cliConfig, defaultCliConfigPath());
   const existedBefore = await pathExists(cliConfigPath);
   const guiConfig = await readJsonFile(sourceConfigPath);
   if (!isRecord(guiConfig)) throw new Error(`GUI config must be a JSON object: ${sourceConfigPath}`);
   const source = pickSourceProvider(guiConfig, providerId);
+  const availableModelIds = Object.keys(isRecord(source.provider.models) ? source.provider.models : {});
+  const requestedModelId = normalizeModelId(args.model ?? availableModelIds[0] ?? "glm-5.3");
+  const availableByNormalizedId = new Map(
+    availableModelIds.map((modelId) => [normalizeModelId(modelId), modelId]),
+  );
+  if (!availableByNormalizedId.has(requestedModelId)) {
+    throw new Error(`Model ${args.model} is not configured for ZCode provider ${source.id}`);
+  }
+  const mainModelId = normalizeModelId(availableByNormalizedId.get(requestedModelId));
+  const targetProviderId = providerId === "zai" || providerId === "bigmodel" ? providerId : source.id;
   const existing = await readJsonFileOrEmpty(cliConfigPath);
   const providerConfig = isRecord(existing.provider) ? existing.provider : {};
-  const existingProvider = isRecord(providerConfig[providerId]) ? providerConfig[providerId] : {};
+  const existingProvider = isRecord(providerConfig[targetProviderId]) ? providerConfig[targetProviderId] : {};
   const existingOptions = isRecord(existingProvider.options) ? existingProvider.options : {};
   const existingModels = isRecord(existingProvider.models) ? existingProvider.models : {};
   const sourceBaseUrl = typeof source.options.baseURL === "string" && source.options.baseURL.trim()
     ? source.options.baseURL.trim()
     : fallbackProviderBaseUrl(providerId);
+  if (!sourceBaseUrl) throw new Error(`No base URL found for ZCode provider: ${source.id}`);
   const sourceModelIds = normalizedSourceModelIds(source.provider, [mainModelId]);
   const liteModelId = args.liteModel
     ? normalizeModelId(args.liteModel)
@@ -753,17 +863,17 @@ async function bootstrapCliConfig(args) {
     };
   }
   const modelConfig = isRecord(existing.model) ? { ...existing.model } : {};
-  modelConfig.main = `${providerId}/${mainModelId}`;
-  if (liteModelId) modelConfig.lite = `${providerId}/${liteModelId}`;
+  modelConfig.main = `${targetProviderId}/${mainModelId}`;
+  if (liteModelId) modelConfig.lite = `${targetProviderId}/${liteModelId}`;
   delete modelConfig.available;
   const nextConfig = {
     ...existing,
     provider: {
       ...providerConfig,
-      [providerId]: {
+      [targetProviderId]: {
         ...existingProvider,
         kind: typeof source.provider.kind === "string" ? source.provider.kind : "anthropic",
-        name: typeof source.provider.name === "string" ? source.provider.name : displayProviderName(providerId),
+        name: typeof source.provider.name === "string" ? source.provider.name : displayProviderName(targetProviderId),
         options: {
           ...existingOptions,
           apiKeyRequired: true,
@@ -792,10 +902,11 @@ async function bootstrapCliConfig(args) {
       has_api_key: true,
     },
     target: {
-      provider_id: providerId,
+      provider_id: targetProviderId,
+      source_provider_id: source.id,
       main_model: modelConfig.main,
       lite_model: modelConfig.lite ?? null,
-      configured_models: modelIds.map((modelId) => `${providerId}/${modelId}`),
+      configured_models: modelIds.map((modelId) => `${targetProviderId}/${modelId}`),
     },
     secret_handling: "API key copied locally from GUI config to CLI config; secret values were not printed.",
     preflight: redactCliConfig(nextConfig),
@@ -813,7 +924,7 @@ async function bootstrapCliConfig(args) {
 async function ensureCliPromptReady(args) {
   if (args.noBootstrap) return;
   const config = await inspectCliConfig(argsPathOrDefault(args.cliConfig, defaultCliConfigPath()));
-  if (config.exists && config.has_model && config.has_coding_plan_api_key && config.config_shape_ok) return;
+  if (config.exists && config.has_model && config.has_selected_provider_api_key && config.config_shape_ok) return;
   await bootstrapCliConfig({
     provider: args.provider,
     model: args.model,
@@ -1654,7 +1765,7 @@ function nonNegativeIntOrDefault(value, fallback) {
 function resolveWorkspacePath(workspace, relativePath) {
   const root = resolve(workspace);
   const absolute = resolve(root, relativePath);
-  if (absolute !== root && !absolute.startsWith(`${root}/`)) {
+  if (!pathIsInside(absolute, root)) {
     throw new Error(`packet vision image escapes workspace: ${relativePath}`);
   }
   return absolute;
@@ -1713,7 +1824,7 @@ async function normalizeVisionAttachmentTargets(vision, workspace) {
     const path = vision.attached_files[index];
     const rel = vision.image_files[index] ?? path;
     const target = await realpath(path);
-    if (target !== realWorkspace && !target.startsWith(`${realWorkspace}/`)) {
+    if (!pathIsInside(target, realWorkspace)) {
       throw new Error(`packet vision attachment target escapes workspace: ${rel}`);
     }
     if (isSecretLikePath(target)) {
@@ -1830,7 +1941,7 @@ function buildPromptArgs(args, promptText, workspace) {
 
 async function runSupervisorJson(supervisorArgs, options = {}) {
   try {
-    const { stdout, stderr } = await execFileAsync("python3", [SUPERVISOR_SCRIPT, ...supervisorArgs], {
+    const { stdout, stderr } = await execFileAsync(pythonCommand(), [SUPERVISOR_SCRIPT, ...supervisorArgs], {
       cwd: options.cwd ?? process.cwd(),
       maxBuffer: 25 * 1024 * 1024,
       timeout: options.timeoutMs ?? undefined,
@@ -2066,7 +2177,7 @@ function appRunPacketDbArg(args) {
 
 async function runModelUsageDbDelta(commandArgs, outPath) {
   try {
-    await execFileAsync("python3", [MODEL_USAGE_DB_DELTA_SCRIPT, ...commandArgs], {
+    await execFileAsync(pythonCommand(), [MODEL_USAGE_DB_DELTA_SCRIPT, ...commandArgs], {
       env: sanitizeChildEnv(),
       maxBuffer: 5 * 1024 * 1024,
       timeout: 30_000,
@@ -3061,7 +3172,7 @@ async function runPacket(args) {
 }
 
 async function doctor() {
-  const payload = await runJson("python3", [
+  const payload = await runJson(pythonCommand(), [
     "tools/zcode_eval/zcode_eval.py",
     "doctor",
     "--json",
@@ -3472,6 +3583,7 @@ async function main() {
   else if (args.command === "cli-doctor") await cliDoctor(args.out);
   else if (args.command === "cli-preflight") await cliPreflight(args);
   else if (args.command === "cli-version") await cliVersion(args.out);
+  else if (args.command === "api-profiles") await apiProfiles(args);
   else if (args.command === "bootstrap-cli-config") await bootstrapCliConfig(args);
   else if (args.command === "vision-preflight") await visionPreflightCommand(args);
   else if (args.command === "cli-prompt") await cliPrompt(args);
