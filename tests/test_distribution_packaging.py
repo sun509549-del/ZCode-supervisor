@@ -32,7 +32,7 @@ class DistributionPackagingTests(unittest.TestCase):
         self.assertEqual(pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_control"], ["*.mjs"])
         self.assertEqual(
             pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_dashboard"],
-            ["*.mjs", "public/*"],
+            ["*.mjs", "*.json", "public/*"],
         )
         self.assertEqual(
             pyproject["tool"]["setuptools"]["package-data"]["tools.zcode_eval"],

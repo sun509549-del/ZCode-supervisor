@@ -60,7 +60,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .brand-mark {
   width: 42px; height: 42px; display: grid; place-items: center;
   border: 1px solid rgba(255,255,255,.25); border-radius: 12px;
-  background: var(--orange); font-size: 23px; font-weight: 900; transform: rotate(-3deg);
+  background: var(--orange); font-size: 11px; font-weight: 900; letter-spacing: -.05em; transform: rotate(-3deg);
   box-shadow: 7px 7px 0 rgba(0,0,0,.16);
 }
 .brand strong { display: block; font-size: 21px; letter-spacing: -.02em; }
@@ -121,6 +121,11 @@ h2 { margin-bottom: 0; font-size: 20px; letter-spacing: -.025em; }
 .panel-heading.compact { align-items: flex-start; }
 .number-badge { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; color: var(--orange-dark); font-size: 20px; }
 .updated-time { color: var(--muted); font: 10px ui-monospace, monospace; }
+.pipeline-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: -3px 0 18px; padding: 0; list-style: none; }
+.pipeline-strip li { position: relative; display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #efede7; }
+.pipeline-strip li:not(:last-child)::after { content: "→"; position: absolute; z-index: 2; right: -10px; color: var(--orange-dark); font-weight: 800; }
+.pipeline-strip b { width: 23px; height: 23px; display: grid; place-items: center; flex: 0 0 23px; border-radius: 50%; background: var(--navy); color: #fff; font: 700 9px ui-monospace, monospace; }
+.pipeline-strip strong, .pipeline-strip small { display: block; }.pipeline-strip strong { font-size: 10px; }.pipeline-strip small { margin-top: 1px; color: var(--muted); font-size: 8px; }
 
 .field { display: grid; gap: 7px; min-width: 0; }
 .field > span { color: #4e5663; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
@@ -155,7 +160,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--orange); box-sha
 .legend span { display: flex; align-items: center; gap: 5px; }
 .legend i { width: 6px; height: 6px; border-radius: 50%; }.input-dot { background: var(--navy-3); }.output-dot { background: var(--orange); }.reasoning-dot { background: var(--yellow); }
 .legend strong { color: var(--ink); font-weight: 700; }
-.mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 24px; }
+.mini-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 24px; }
 .mini-stats div { padding: 12px 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.5); }
 .mini-stats span, .mini-stats strong { display: block; }
 .mini-stats span { color: var(--muted); font-size: 9px; }
@@ -183,7 +188,9 @@ tbody tr:hover { background: rgba(240,107,60,.035); }
 .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 20px; font-size: 9px; font-weight: 700; white-space: nowrap; }
 .status-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-success { background: rgba(47,157,126,.11); color: #287f68; }.status-active { background: rgba(84,123,167,.12); color: #436d9b; }.status-failed { background: rgba(200,80,78,.11); color: #a73f3d; }.status-unknown { background: #ebe8e1; color: #747981; }
+.status-cell small { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; }
 .api-cell strong, .api-cell span { display: block; }.api-cell strong { max-width: 160px; overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }.api-cell span { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.token-cell { display: flex; flex-wrap: wrap; gap: 4px; }.token-cell span { padding: 3px 5px; border-radius: 5px; background: #e8e4db; font-size: 9px; }
 .numeric { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 700; }
 .muted-value { color: #999da3; font-weight: 500; }
 .change-count { display: inline-flex; align-items: center; gap: 4px; }.change-count b { min-width: 20px; padding: 2px 5px; border-radius: 5px; background: #e6e2da; color: var(--ink); text-align: center; }
@@ -200,10 +207,13 @@ tbody tr:hover { background: rgba(240,107,60,.035); }
 .drawer-content { display: grid; gap: 12px; padding: 20px 24px 40px; }
 .detail-section { padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: #fffefa; }
 .detail-section h3 { margin-bottom: 12px; color: var(--muted); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
+.detail-section h4 { margin: 15px 0 7px; color: var(--ink); font-size: 10px; }
 .detail-objective { margin-bottom: 0; font-size: 15px; font-weight: 700; line-height: 1.55; }
+.detail-copy { margin-bottom: 10px; color: #4d5561; font-size: 11px; line-height: 1.65; white-space: pre-wrap; }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }.detail-grid span, .timeline span { display: block; color: var(--muted); font-size: 9px; }.detail-grid strong, .timeline strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 11px; }
 .token-detail { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }.token-detail div { padding: 9px; border-radius: 8px; background: #efede7; }.token-detail span, .token-detail strong { display: block; }.token-detail span { color: var(--muted); font-size: 8px; }.token-detail strong { margin-top: 4px; font-size: 11px; }
 .file-list, .evidence-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }.file-list li, .evidence-list li { padding: 7px 9px; border-radius: 7px; background: #efede7; font: 10px ui-monospace, monospace; overflow-wrap: anywhere; }
+.text-list { display: grid; gap: 7px; margin: 0; padding-left: 20px; color: #4d5561; font-size: 10px; line-height: 1.55; }.text-list li { padding-left: 3px; }
 .evidence-list li { font-family: inherit; }.evidence-list b { float: right; color: var(--mint); font-size: 9px; }
 .validation-output { max-height: 190px; margin: 8px 0 0; padding: 10px; overflow: auto; border-radius: 8px; background: var(--navy); color: #d9e1ea; font: 10px/1.55 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .error-copy { color: var(--red); }

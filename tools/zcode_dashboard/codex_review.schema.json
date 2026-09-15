@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "verdict": { "type": "string", "enum": ["PASS", "NEED_FIX"] },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "title": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": ["integer", "null"], "minimum": 1 },
+          "details": { "type": "string" }
+        },
+        "required": ["severity", "title", "file", "line", "details"]
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "criterion": { "type": "string" },
+          "status": { "type": "string", "enum": ["pass", "fail", "unknown"] },
+          "evidence": { "type": "string" }
+        },
+        "required": ["criterion", "status", "evidence"]
+      }
+    },
+    "recommended_fixes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["verdict", "summary", "findings", "criteria", "recommended_fixes"]
+}

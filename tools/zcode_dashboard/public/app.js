@@ -14,10 +14,10 @@ const elements = {
   runningHint: $("runningHint"), successHint: $("successHint"), tokenCoverage: $("tokenCoverage"),
   providerSelect: $("providerSelect"), modelSelect: $("modelSelect"), activeSelection: $("activeSelection"),
   applySelectionButton: $("applySelectionButton"), taskForm: $("taskForm"), submitTaskButton: $("submitTaskButton"),
-  objectiveInput: $("objectiveInput"), allowedFilesInput: $("allowedFilesInput"), validationInput: $("validationInput"), taskClassSelect: $("taskClassSelect"),
+  objectiveInput: $("objectiveInput"), constraintsInput: $("constraintsInput"), taskClassSelect: $("taskClassSelect"),
   usageTotal: $("usageTotal"), inputTokens: $("inputTokens"), outputTokens: $("outputTokens"), reasoningTokens: $("reasoningTokens"),
   inputSegment: $("inputSegment"), outputSegment: $("outputSegment"), reasoningSegment: $("reasoningSegment"),
-  totalDuration: $("totalDuration"), averageDuration: $("averageDuration"), measuredTasks: $("measuredTasks"), updatedTime: $("updatedTime"),
+  codexTokens: $("codexTokens"), totalDuration: $("totalDuration"), averageDuration: $("averageDuration"), measuredTasks: $("measuredTasks"), updatedTime: $("updatedTime"),
   searchInput: $("searchInput"), statusFilter: $("statusFilter"), sortSelect: $("sortSelect"),
   taskTableBody: $("taskTableBody"), emptyState: $("emptyState"), taskCount: $("taskCount"),
   detailDrawer: $("detailDrawer"), drawerBackdrop: $("drawerBackdrop"), closeDrawerButton: $("closeDrawerButton"), drawerTitle: $("drawerTitle"), drawerContent: $("drawerContent"),
@@ -25,9 +25,12 @@ const elements = {
 };
 
 const STATUS = {
-  success: ["已成功", "success"], running: ["运行中", "active"], retrying: ["重试中", "active"], preparing: ["准备中", "active"], queued: ["排队中", "active"],
+  success: ["验收通过", "success"], planning: ["Codex 规划中", "active"], reviewing: ["Codex 验收中", "active"], running: ["ZCode 执行中", "active"],
+  retrying: ["ZCode 重试中", "active"], preparing: ["准备中", "active"], queued: ["排队中", "active"], needs_fix: ["需要修复", "failed"],
   failed: ["未通过", "failed"], timeout: ["已超时", "failed"], aborted: ["已中止", "failed"], unknown: ["状态未知", "unknown"],
 };
+
+const STAGES = { codex_plan: "Codex 规划", zcode_execute: "ZCode 执行", codex_review: "Codex 验收", complete: "流程结束" };
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 const compactFormatter = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
@@ -95,16 +98,24 @@ function aggregateTokens(tasks) {
   }, { input: 0, output: 0, reasoning: 0 });
 }
 
+function codexTokenTotal(task) {
+  const measured = [task.codex_usage?.planner, task.codex_usage?.reviewer].filter((usage) => usage?.available);
+  return measured.length ? measured.reduce((sum, usage) => sum + (Number(usage.total) || 0), 0) : null;
+}
+
 function renderSummary() {
   const { summary, tasks, generated_at: generatedAt } = state.dashboard;
   elements.totalTasks.textContent = formatNumber(summary.total_tasks);
   elements.runningTasks.textContent = formatNumber(summary.running_tasks);
   elements.successRate.textContent = formatPercent(summary.success_rate);
   elements.totalTokens.textContent = formatNumber(summary.total_tokens, true);
-  elements.runningHint.textContent = summary.running_tasks ? "任务正在由 ZCode 处理" : "当前队列已清空";
-  elements.successHint.textContent = `${formatNumber(summary.successful_tasks)} 项已通过主管验证`;
+  elements.runningHint.textContent = summary.running_tasks
+    ? `${STAGES[state.dashboard.active_job?.stage] || "流水线"}正在处理`
+    : "当前队列已清空";
+  elements.successHint.textContent = `${formatNumber(summary.successful_tasks)} 项已通过 Codex 验收`;
   elements.tokenCoverage.textContent = `${formatNumber(summary.measured_token_tasks)} / ${formatNumber(summary.total_tasks)} 项有记录`;
   elements.usageTotal.textContent = formatNumber(summary.total_tokens);
+  elements.codexTokens.textContent = formatNumber(summary.codex_total_tokens, true);
   elements.totalDuration.textContent = formatDuration(summary.total_duration_ms);
   elements.averageDuration.textContent = formatDuration(summary.average_duration_ms);
   elements.measuredTasks.textContent = `${formatNumber(summary.measured_token_tasks)} / ${formatNumber(summary.total_tasks)}`;
@@ -155,19 +166,19 @@ function statusInfo(status) {
 
 function statusMatches(task) {
   if (state.status === "all") return true;
-  if (state.status === "active") return ["running", "retrying", "preparing", "queued"].includes(task.status);
-  if (state.status === "failed") return ["failed", "timeout", "aborted"].includes(task.status);
+  if (state.status === "active") return ["planning", "running", "retrying", "reviewing", "preparing", "queued"].includes(task.status);
+  if (state.status === "failed") return ["needs_fix", "failed", "timeout", "aborted"].includes(task.status);
   return task.status === state.status;
 }
 
 function filteredTasks() {
   const query = state.search.trim().toLowerCase();
   const tasks = state.dashboard.tasks.filter((task) => {
-    const haystack = [task.objective, task.id, task.provider, task.model, ...(task.changed_files || [])].join(" ").toLowerCase();
+    const haystack = [task.objective, task.plan?.title, task.id, task.provider, task.model, ...(task.changed_files || [])].join(" ").toLowerCase();
     return statusMatches(task) && (!query || haystack.includes(query));
   });
   return tasks.sort((left, right) => {
-    if (state.sort === "tokens") return (right.tokens?.total ?? -1) - (left.tokens?.total ?? -1);
+    if (state.sort === "tokens") return ((codexTokenTotal(right) || 0) + (right.tokens?.total || 0)) - ((codexTokenTotal(left) || 0) + (left.tokens?.total || 0));
     if (state.sort === "duration") return (right.duration_ms ?? -1) - (left.duration_ms ?? -1);
     return Date.parse(right.started_at || 0) - Date.parse(left.started_at || 0);
   });
@@ -196,14 +207,19 @@ function renderTasks() {
 
     const [statusLabel, statusClass] = statusInfo(task.status);
     const badge = document.createElement("span"); badge.className = `status-badge status-${statusClass}`; badge.textContent = statusLabel;
-    row.append(cell(badge));
+    const statusCell = document.createElement("div"); statusCell.className = "status-cell"; statusCell.append(badge);
+    const stage = document.createElement("small"); stage.textContent = STAGES[task.stage] || (task.plan ? "受控流水线" : "历史任务"); statusCell.append(stage);
+    row.append(cell(statusCell));
 
     const provider = document.createElement("div"); provider.className = "api-cell";
     const providerName = document.createElement("strong"); providerName.textContent = text(task.provider);
     const modelName = document.createElement("span"); modelName.textContent = text(task.model);
     provider.append(providerName, modelName); row.append(cell(provider));
 
-    row.append(cell(formatNumber(task.tokens?.available ? task.tokens.total : null, true), `numeric${task.tokens?.available ? "" : " muted-value"}`));
+    const tokenCell = document.createElement("div"); tokenCell.className = "token-cell";
+    const codexTokens = document.createElement("span"); codexTokens.textContent = `C ${formatNumber(codexTokenTotal(task), true)}`;
+    const zcodeTokens = document.createElement("span"); zcodeTokens.textContent = `Z ${formatNumber(task.tokens?.available ? task.tokens.total : null, true)}`;
+    tokenCell.append(codexTokens, zcodeTokens); row.append(cell(tokenCell, "numeric"));
     row.append(cell(formatDuration(task.duration_ms), Number.isFinite(task.duration_ms) ? "numeric" : "muted-value"));
     const changes = document.createElement("span"); changes.className = "change-count";
     const changeLabel = document.createElement("span"); changeLabel.textContent = "文件";
@@ -237,6 +253,12 @@ function appendFileList(section, files, emptyCopy = "没有记录文件") {
   section.append(list);
 }
 
+function appendTextList(section, items, emptyCopy = "没有记录") {
+  const list = document.createElement("ol"); list.className = "text-list";
+  for (const value of items?.length ? items : [emptyCopy]) { const item = document.createElement("li"); item.textContent = value; list.append(item); }
+  section.append(list);
+}
+
 function openDrawer(taskId, shouldFocus = true) {
   const task = state.dashboard.tasks.find((item) => item.id === taskId);
   if (!task) return;
@@ -245,10 +267,30 @@ function openDrawer(taskId, shouldFocus = true) {
   elements.drawerContent.replaceChildren();
 
   const overview = detailSection("任务目标"); const objective = document.createElement("p"); objective.className = "detail-objective"; objective.textContent = task.objective; overview.append(objective);
-  overview.append(detailGrid([["API", task.provider], ["模型", task.model], ["尝试次数", task.attempt_count], ["产物质量", task.artifact_quality]]));
+  overview.append(detailGrid([["当前阶段", STAGES[task.stage]], ["审核结论", task.review?.verdict], ["ZCode API", task.provider], ["ZCode 模型", task.model], ["尝试次数", task.attempt_count], ["产物质量", task.artifact_quality]]));
   elements.drawerContent.append(overview);
 
-  const token = detailSection("Token 构成"); const tokenGrid = document.createElement("div"); tokenGrid.className = "token-detail";
+  if (task.plan) {
+    const plan = detailSection(`Codex 实施方案 · ${text(task.plan.title)}`);
+    const summary = document.createElement("p"); summary.className = "detail-copy"; summary.textContent = task.plan.summary; plan.append(summary);
+    const stepsTitle = document.createElement("h4"); stepsTitle.textContent = "实施步骤"; plan.append(stepsTitle); appendTextList(plan, task.plan.steps);
+    const acceptanceTitle = document.createElement("h4"); acceptanceTitle.textContent = "验收标准"; plan.append(acceptanceTitle); appendTextList(plan, task.plan.acceptance_criteria);
+    const riskTitle = document.createElement("h4"); riskTitle.textContent = "风险"; plan.append(riskTitle); appendTextList(plan, task.plan.risks, "无已记录风险");
+    const exclusionTitle = document.createElement("h4"); exclusionTitle.textContent = "排除项"; plan.append(exclusionTitle); appendTextList(plan, task.plan.exclusions, "无排除项");
+    const validationTitle = document.createElement("h4"); validationTitle.textContent = "验证命令"; plan.append(validationTitle);
+    const validationCommand = document.createElement("pre"); validationCommand.className = "validation-output"; validationCommand.textContent = task.plan.validation_command; plan.append(validationCommand);
+    elements.drawerContent.append(plan);
+  }
+
+  const codexToken = detailSection("Codex Token · 规划 / 验收"); const codexTokenGrid = document.createElement("div"); codexTokenGrid.className = "token-detail";
+  for (const [stage, usage] of [["规划", task.codex_usage?.planner], ["验收", task.codex_usage?.reviewer]]) {
+    for (const [part, value] of [["总计", usage?.total], ["输入", usage?.input], ["输出", usage?.output], ["推理", usage?.reasoning]]) {
+      const item = document.createElement("div"); const span = document.createElement("span"); const strong = document.createElement("strong"); span.textContent = `${stage} ${part}`; strong.textContent = formatNumber(usage?.available ? value : null, true); item.append(span, strong); codexTokenGrid.append(item);
+    }
+  }
+  codexToken.append(codexTokenGrid); elements.drawerContent.append(codexToken);
+
+  const token = detailSection("ZCode Token 构成"); const tokenGrid = document.createElement("div"); tokenGrid.className = "token-detail";
   for (const [label, value] of [["总计", task.tokens?.total], ["输入", task.tokens?.input], ["输出", task.tokens?.output], ["推理", task.tokens?.reasoning]]) {
     const item = document.createElement("div"); const span = document.createElement("span"); const strong = document.createElement("strong"); span.textContent = label; strong.textContent = formatNumber(task.tokens?.available ? value : null, true); item.append(span, strong); tokenGrid.append(item);
   }
@@ -256,9 +298,21 @@ function openDrawer(taskId, shouldFocus = true) {
   if (!task.tokens?.available) { const missing = document.createElement("p"); missing.className = "error-copy"; missing.textContent = `未记录原因：${text(task.tokens?.unavailable_reason)}`; token.append(missing); }
   elements.drawerContent.append(token);
 
-  const timeline = detailSection("时间线"); timeline.append(detailGrid([["开始", task.started_at ? new Date(task.started_at).toLocaleString("zh-CN") : null], ["完成", task.completed_at ? new Date(task.completed_at).toLocaleString("zh-CN") : null], ["总耗时", formatDuration(task.duration_ms)], ["任务 ID", task.id]])); elements.drawerContent.append(timeline);
+  const timeline = detailSection("时间线"); timeline.append(detailGrid([["任务开始", task.started_at ? new Date(task.started_at).toLocaleString("zh-CN") : null], ["方案完成", task.plan_completed_at ? new Date(task.plan_completed_at).toLocaleString("zh-CN") : null], ["ZCode 完成", task.worker_completed_at ? new Date(task.worker_completed_at).toLocaleString("zh-CN") : null], ["审核完成", task.review_completed_at ? new Date(task.review_completed_at).toLocaleString("zh-CN") : null], ["总耗时", formatDuration(task.duration_ms)], ["任务 ID", task.id]])); elements.drawerContent.append(timeline);
   const changed = detailSection(`变更文件 · ${task.changed_files?.length || 0}`); appendFileList(changed, task.changed_files); elements.drawerContent.append(changed);
   const allowed = detailSection(`允许范围 · ${task.allowed_files?.length || 0}`); appendFileList(allowed, task.allowed_files); elements.drawerContent.append(allowed);
+
+  if (task.review) {
+    const review = detailSection(`Codex 审核 · ${task.review.verdict}`);
+    const summary = document.createElement("p"); summary.className = "detail-copy"; summary.textContent = task.review.summary; review.append(summary);
+    const findings = task.review.findings?.map((item) => `${item.severity.toUpperCase()} · ${item.title} · ${item.file}${item.line ? `:${item.line}` : ""} — ${item.details}`) || [];
+    appendTextList(review, findings, "未发现阻塞问题");
+    const criteriaTitle = document.createElement("h4"); criteriaTitle.textContent = "验收证据"; review.append(criteriaTitle);
+    appendTextList(review, task.review.criteria?.map((item) => `${item.status.toUpperCase()} · ${item.criterion} — ${item.evidence}`), "未记录验收证据");
+    const fixesTitle = document.createElement("h4"); fixesTitle.textContent = "建议修复"; review.append(fixesTitle);
+    appendTextList(review, task.review.recommended_fixes, "无");
+    elements.drawerContent.append(review);
+  }
 
   const audit = detailSection("主管审计");
   const evidence = document.createElement("ul"); evidence.className = "evidence-list";
@@ -326,18 +380,17 @@ async function submitTask(event) {
   event.preventDefault();
   const payload = {
     objective: elements.objectiveInput.value.trim(), provider: elements.providerSelect.value, model: elements.modelSelect.value,
-    allowed_files: elements.allowedFilesInput.value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean),
-    validation: elements.validationInput.value.trim(), task_class: elements.taskClassSelect.value,
+    constraints: elements.constraintsInput.value.trim(), task_class: elements.taskClassSelect.value,
   };
   elements.submitTaskButton.disabled = true;
   elements.submitTaskButton.querySelector("span").textContent = "正在启动…";
   try {
     await api("/api/tasks", { method: "POST", body: JSON.stringify(payload) });
-    showToast("任务已进入 ZCode 执行队列");
-    elements.objectiveInput.value = ""; elements.allowedFilesInput.value = ""; elements.validationInput.value = "";
+    showToast("Codex 正在分析仓库并制定方案");
+    elements.objectiveInput.value = ""; elements.constraintsInput.value = "";
     await refresh({ quiet: true });
   } catch (error) { showToast(error.message, "error"); }
-  finally { elements.submitTaskButton.disabled = false; elements.submitTaskButton.querySelector("span").textContent = "交给 ZCode"; }
+  finally { elements.submitTaskButton.disabled = false; elements.submitTaskButton.querySelector("span").textContent = "让 Codex 制定方案"; }
 }
 
 elements.providerSelect.addEventListener("change", () => fillModels());

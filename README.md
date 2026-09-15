@@ -81,7 +81,9 @@ for the bounded execution and review flow.
 ### Local task dashboard
 
 Start the dependency-free local dashboard for any repository that already has
-ZCode Supervisor routing installed:
+ZCode Supervisor routing installed. Codex CLI must also be installed and logged
+in because the dashboard uses short-lived, non-interactive Codex calls for
+planning and review:
 
 ```powershell
 zcode-dashboard --workspace C:\path\to\project
@@ -93,14 +95,38 @@ From a source checkout, use:
 npm run dashboard -- --workspace C:\path\to\project
 ```
 
-The page lists current and historical tasks, live status, elapsed time, changed
-files, audit and validation results, and measured input/output/reasoning token
-usage. Missing token evidence is shown as unavailable rather than zero. You can
-select a configured ZCode API and model or launch a bounded task with an
-explicit allowed-file list and validation command. The server binds to
-`127.0.0.1` and exposes only redacted provider metadata; API keys never enter
-the browser. API selection applies to the local ZCode CLI, so the dashboard
-runs one task at a time to keep provider selection deterministic.
+The task form accepts the original request, optional planning constraints, and
+the ZCode API/model selection. Every new task follows this sequence:
+
+```text
+Codex Planner (read-only, exits)
+  -> writes .ai/tasks/<id>/TASK.md, PLAN.md, ACCEPTANCE.md
+  -> ZCode Worker executes only the files and validation chosen by Codex
+  -> writes DELIVERY.md and exits
+  -> Codex Reviewer (read-only) writes REVIEW.md with PASS or NEED_FIX
+```
+
+The Codex stages run with `codex exec --sandbox read-only --ephemeral` and a
+JSON output schema. The dashboard process writes their structured handoff
+files; Codex itself does not edit the repository during planning or review.
+ZCode never chooses its own scope: `--allowed`, acceptance criteria, and the
+validation command come from the validated Codex plan. Codex is not kept alive
+while ZCode works.
+
+The page lists current and historical tasks, the active pipeline stage, elapsed
+time, changed files, the full Codex plan, reviewer findings, audit and
+validation results, and separately measured Codex and ZCode token usage.
+Missing token evidence is shown as unavailable rather than zero. Every provider
+configured in ZCode appears in the API selector, including custom gateways such
+as `workbuddy/deepseek-v4.1-flash`; choosing one applies it to the local ZCode
+CLI before the task starts.
+
+The server binds to `127.0.0.1` and exposes only redacted provider metadata;
+API keys and Codex authentication never enter the browser. It runs one task at
+a time to keep provider selection and handoff artifacts deterministic. Set
+`CODEX_CLI_PATH` if `codex.exe`/`codex` is not discoverable, and optionally set
+`ZCODE_DASHBOARD_CODEX_TIMEOUT_MS` to change the 20-minute timeout for each
+Codex stage.
 
 For the opt-in direct delegated measurement workflow added after PR #10, see
 [Direct Delegated Operational Workflow](docs/direct-delegated-operational-workflow.md).

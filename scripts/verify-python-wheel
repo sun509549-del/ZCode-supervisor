@@ -17,6 +17,8 @@ REQUIRED_FILES = {
     "tools/zcode_control/zcodectl.mjs",
     "tools/zcode_dashboard/__init__.py",
     "tools/zcode_dashboard/server.mjs",
+    "tools/zcode_dashboard/codex_plan.schema.json",
+    "tools/zcode_dashboard/codex_review.schema.json",
     "tools/zcode_dashboard/public/index.html",
     "tools/zcode_dashboard/public/styles.css",
     "tools/zcode_dashboard/public/app.js",

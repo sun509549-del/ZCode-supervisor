@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="ZCode Supervisor 本地任务控制台">
-  <title>ZCode 任务控制台</title>
+  <meta name="description" content="Codex 规划、ZCode 执行、Codex 验收的本地任务控制台">
+  <title>Codex × ZCode 任务控制台</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <aside class="sidebar">
-    <a class="brand" href="#overview" aria-label="ZCode 任务控制台首页">
-      <span class="brand-mark" aria-hidden="true">Z</span>
-      <span><strong>ZCode</strong><small>SUPERVISOR</small></span>
+    <a class="brand" href="#overview" aria-label="Codex 与 ZCode 任务控制台首页">
+      <span class="brand-mark" aria-hidden="true">C·Z</span>
+      <span><strong>Agent Flow</strong><small>CODEX × ZCODE</small></span>
     </a>
     <nav class="side-nav" aria-label="页面导航">
       <a class="active" href="#overview"><span>01</span>运行总览</a>
@@ -33,7 +33,7 @@
       <div>
         <p class="eyebrow">WORKSPACE PULSE</p>
         <h1>任务控制台</h1>
-        <p class="subtitle">看清每一次委派的成本、进度与质量。</p>
+        <p class="subtitle">Codex 负责规划与验收，ZCode 负责实现。</p>
       </div>
       <div class="topbar-actions">
         <div class="workspace-chip" title="当前工作区">
@@ -63,7 +63,7 @@
         <p id="successHint">基于已有终态任务</p>
       </article>
       <article class="metric-card ink-card">
-        <div class="metric-top"><span>已记录 Tokens</span><span class="metric-index">04</span></div>
+        <div class="metric-top"><span>ZCode Tokens</span><span class="metric-index">04</span></div>
         <strong class="metric-value" id="totalTokens">—</strong>
         <p id="tokenCoverage">只统计可验证的 Token 证据</p>
       </article>
@@ -73,11 +73,16 @@
       <article class="panel task-composer" id="new-task">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">NEW DELEGATION</p>
-            <h2>创建受控任务</h2>
+            <p class="eyebrow">CODEX-LED DELEGATION</p>
+            <h2>让 Codex 制定方案</h2>
           </div>
           <span class="number-badge">+</span>
         </div>
+        <ol class="pipeline-strip" aria-label="任务流水线">
+          <li><b>1</b><span><strong>Codex</strong><small>分析与规划</small></span></li>
+          <li><b>2</b><span><strong>ZCode</strong><small>编码与测试</small></span></li>
+          <li><b>3</b><span><strong>Codex</strong><small>审核与验收</small></span></li>
+        </ol>
         <form id="taskForm">
           <label class="field field-wide">
             <span>任务目标</span>
@@ -97,14 +102,10 @@
             <span><i class="status-light" aria-hidden="true"></i>当前生效：<strong id="activeSelection">读取中…</strong></span>
             <button class="text-button" id="applySelectionButton" type="button">仅应用 API 设置</button>
           </div>
-          <label class="field field-wide">
-            <span>允许修改的文件 <small>每行一个相对路径</small></span>
-            <textarea id="allowedFilesInput" rows="2" required placeholder="src/order.js&#10;tests/order.test.js"></textarea>
-          </label>
           <div class="form-row validation-row">
             <label class="field">
-              <span>验证命令</span>
-              <input id="validationInput" type="text" maxlength="2000" required placeholder="npm test -- order.test.js">
+              <span>规划约束 <small>可选，由 Codex 纳入方案</small></span>
+              <textarea id="constraintsInput" rows="3" maxlength="4000" placeholder="例如：保持现有 API；不要新增依赖；兼容 Windows"></textarea>
             </label>
             <label class="field compact-field">
               <span>任务类型</span>
@@ -120,8 +121,8 @@
             </label>
           </div>
           <div class="composer-footer">
-            <p><span aria-hidden="true">◇</span> 启动前会锁定允许文件并由主管重新验证。</p>
-            <button class="primary-button" id="submitTaskButton" type="submit"><span>交给 ZCode</span><b aria-hidden="true">→</b></button>
+            <p><span aria-hidden="true">◇</span> Codex 将读取仓库并决定文件范围、实施步骤和验收命令。</p>
+            <button class="primary-button" id="submitTaskButton" type="submit"><span>让 Codex 制定方案</span><b aria-hidden="true">→</b></button>
           </div>
         </form>
       </article>
@@ -135,7 +136,7 @@
           <span class="updated-time" id="updatedTime">等待数据</span>
         </div>
         <div class="token-total">
-          <span>可验证 Token 总量</span>
+          <span>ZCode 可验证 Token 总量</span>
           <strong id="usageTotal">—</strong>
         </div>
         <div class="token-bar" aria-label="Token 构成">
@@ -149,13 +150,14 @@
           <span><i class="reasoning-dot"></i>推理 <strong id="reasoningTokens">—</strong></span>
         </div>
         <div class="mini-stats">
+          <div><span>Codex Token</span><strong id="codexTokens">—</strong></div>
           <div><span>累计耗时</span><strong id="totalDuration">—</strong></div>
           <div><span>平均耗时</span><strong id="averageDuration">—</strong></div>
           <div><span>有 Token 记录</span><strong id="measuredTasks">—</strong></div>
         </div>
         <div class="usage-footnote">
           <span aria-hidden="true">i</span>
-          <p>只有上游返回或数据库增量可验证时才计入 Token。缺失数据标记为“未记录”。</p>
+          <p>Codex 与 ZCode 的 Token 分开记录。只有调用方返回证据时才计入，缺失数据标记为“未记录”。</p>
         </div>
       </article>
     </section>
@@ -174,7 +176,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>任务</th><th>状态</th><th>API / 模型</th><th>Tokens</th><th>耗时</th><th>变更</th><th>开始时间</th><th><span class="sr-only">操作</span></th></tr></thead>
+          <thead><tr><th>任务</th><th>阶段 / 状态</th><th>ZCode API / 模型</th><th>Codex / ZCode Token</th><th>耗时</th><th>变更</th><th>开始时间</th><th><span class="sr-only">操作</span></th></tr></thead>
           <tbody id="taskTableBody">
             <tr class="loading-row"><td colspan="8"><span class="spinner"></span>正在读取任务证据…</td></tr>
           </tbody>

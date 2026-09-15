@@ -34,5 +34,5 @@ include = ["tools*"]
 
 [tool.setuptools.package-data]
 "tools.zcode_control" = ["*.mjs"]
-"tools.zcode_dashboard" = ["*.mjs", "public/*"]
+"tools.zcode_dashboard" = ["*.mjs", "*.json", "public/*"]
 "tools.zcode_eval" = ["fixtures/*.png", "rubrics/*.json"]
